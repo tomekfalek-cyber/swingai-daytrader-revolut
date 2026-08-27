@@ -442,8 +442,8 @@ tr:hover td{background:rgba(123,97,255,.04);}
           <option value="LINK_USDC">LINK/USDC</option>
         </select>
         <span style="font-size:8.5pt;color:var(--text2)">TF:</span>
-        <button class="chart-tf-btn on" data-tf="1d" onclick="inlineChartTF(this)">D</button>
-        <button class="chart-tf-btn" data-tf="4h" onclick="inlineChartTF(this)">4H</button>
+        <button class="chart-tf-btn on" data-tf="5m" onclick="inlineChartTF(this)">5min</button>
+        <button class="chart-tf-btn" data-tf="15m" onclick="inlineChartTF(this)">15min</button>
         <button class="chart-tf-btn" data-tf="1h" onclick="inlineChartTF(this)">1H</button>
         <span id="inline-chart-status" style="font-size:8pt;color:var(--gold);margin-left:8px"></span>
         <span id="inline-chart-price" style="margin-left:auto;font-size:11pt;font-weight:900;font-family:'JetBrains Mono',monospace;color:var(--text)"></span>
@@ -1306,7 +1306,7 @@ async function getKlines(sym,tf,limit){
   limit=limit||200;
   const kMap={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
   const kSym=kMap[sym]||(sym.replace('_',''));
-  const tfMap={'1d':'1440','4h':'240','1h':'60','15m':'15'};const kTf=tfMap[tf]||'60';
+  const tfMap={'1d':'1440','4h':'240','1h':'60','15m':'15','5m':'5'};const kTf=tfMap[tf]||'5';
   const url='https://swingai-revolut.tomek-falek.workers.dev/market?path='+encodeURIComponent('/0/public/OHLC')+'&qs='+encodeURIComponent('pair='+kSym+'&interval='+kTf);
   const r=await fetchWithTimeout(url,15000);const d=await r.json();
   if(d.error&&d.error.length) throw new Error('Kraken OHLC: '+d.error[0]);
@@ -4578,8 +4578,9 @@ function riskBarHtml(kellySzanse, pct) {
 // ── INLINE CHART ENGINE ────────────────────────────────────────────
 var INLINE_CHART = {
   sym: 'BTC_USDC',
-  tf: '1d',
+  tf: '5m',
   klines: [],
+  sig: null,
 
   load: async function() {
     var statusEl = gi('inline-chart-status');
@@ -4587,7 +4588,7 @@ var INLINE_CHART = {
     var chgEl = gi('inline-chart-chg');
     if (statusEl) statusEl.textContent = 'Pobieranie danych...';
     try {
-      var limit = this.tf === '1d' ? 90 : this.tf === '4h' ? 120 : 100;
+      var limit = this.tf === '1h' ? 150 : this.tf === '15m' ? 120 : 150;
       var raw = await getKlines(this.sym, this.tf, limit);
       this.klines = raw.map(function(k){ return {t:+k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5]}; });
       if (statusEl) statusEl.textContent = '';
@@ -4616,7 +4617,9 @@ var INLINE_CHART = {
     if (window.lastSigs && lastSigs.length) { sig = lastSigs.find(function(s){ return s.sym===sym; }) || null; }
     if (!sig && window.lastSignalData && lastSignalData.sym === sym) sig = lastSignalData;
     if (sig) {
+      this.sig = sig;
       sigEl.innerHTML = '<span style="color:var(--accent);font-weight:700">🧠 Ostatni sygnał AI — '+sym.replace('_USDC','/USDC')+'</span><br>' + aiExplainSignal(sig);
+      this.draw();
     } else {
       // Auto-analizuj
       sigEl.innerHTML = '<span style="color:var(--text3)">🔄 Analizuję '+sym.replace('_USDC','/USDC')+'...</span>';
@@ -4625,9 +4628,11 @@ var INLINE_CHART = {
         if (s) {
           if (window.lastSigs) { var idx=lastSigs.findIndex(function(x){return x.sym===sym;}); if(idx>=0) lastSigs[idx]=s; else lastSigs.push(s); }
           window.lastSignalData = s;
+          self.sig = s;
           gi('last-signal-box').innerHTML = aiExplainSignal(s);
           gi('btn-ai-last').style.display = '';
           sigEl.innerHTML = '<span style="color:var(--accent);font-weight:700">🧠 Sygnał AI — '+sym.replace('_USDC','/USDC')+'</span><br>' + aiExplainSignal(s);
+          self.draw();
         } else {
           sigEl.textContent = 'Brak sygnału dla '+sym.replace('_USDC','/USDC');
         }
@@ -4652,6 +4657,12 @@ var INLINE_CHART = {
     var chartH = H - PAD.t - PAD.b;
 
     var allH = klines.map(function(k){return k.h;}), allL = klines.map(function(k){return k.l;});
+    // Uwzglednij tez poziomy TP/SL aktualnego sygnalu, zeby strefy nigdy nie
+    // wychodzily poza widoczny obszar wykresu (obciete u gory/dolu).
+    if (this.sig) {
+      if (this.sig.buy && this.sig.levels) { allH.push(this.sig.levels.tp); allL.push(this.sig.levels.sl); }
+      if (this.sig.shortSignal && this.sig.shortLevels) { allH.push(this.sig.shortLevels.sl); allL.push(this.sig.shortLevels.tp); }
+    }
     var priceMax = Math.max.apply(null,allH), priceMin = Math.min.apply(null,allL);
     var priceRange = priceMax - priceMin || 1;
     var pad = priceRange * 0.06;
@@ -4660,6 +4671,46 @@ var INLINE_CHART = {
     var yP = function(p){ return PAD.t + (1-(p-priceMin)/priceRange)*chartH; };
     var bW = Math.max(2, Math.floor(chartW / n * 0.65));
     var bGap = chartW / n;
+
+    // ── STREFY TP/SL (long i short informacyjny) ──────────────────────
+    // Rysowane PRZED świecami, żeby były w tle. Zielony = strefa w kierunku
+    // zysku (TP), czerwony = strefa w kierunku straty (SL), od ceny wejścia.
+    var sig = this.sig;
+    var zoneX = PAD.l, zoneW = chartW;
+    function drawZone(fromP, toP, color, label) {
+      var y1 = yP(fromP), y2 = yP(toP);
+      var top = Math.min(y1,y2), h = Math.max(1, Math.abs(y2-y1));
+      ctx.fillStyle = color;
+      ctx.fillRect(zoneX, top, zoneW, h);
+    }
+    function drawLevelLine(price, color, label, dash) {
+      var y = yP(price);
+      ctx.setLineDash(dash || [5,3]);
+      ctx.strokeStyle = color; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W-PAD.r, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = color; ctx.font = 'bold 8.5px JetBrains Mono,monospace'; ctx.textAlign = 'left';
+      var pLbl = price>=1?price.toFixed(2):price.toFixed(5);
+      ctx.fillText(label + ' ' + pLbl, PAD.l + 4, y - 3);
+    }
+    var rrText = null;
+    if (sig && sig.buy && sig.levels) {
+      drawZone(sig.price, sig.levels.tp, 'rgba(0,229,160,0.12)');
+      drawZone(sig.price, sig.levels.sl, 'rgba(255,61,90,0.12)');
+      drawLevelLine(sig.levels.tp, 'rgba(0,229,160,0.9)', 'TP');
+      drawLevelLine(sig.levels.sl, 'rgba(255,61,90,0.9)', 'SL');
+      drawLevelLine(sig.price,     'rgba(255,255,255,0.55)', 'WEJŚCIE (LONG)', [2,2]);
+      rrText = { text: 'R:R 1:' + sig.levels.rr, color: 'rgba(0,229,160,0.95)', dir: 'LONG' };
+    } else if (sig && sig.shortSignal && sig.shortLevels) {
+      // Short = TYLKO informacyjny (Revolut X nie obsluguje marginu) - inny
+      // odcien (bursztynowy), zeby wizualnie nie mylic z realnie wykonywalnym longiem.
+      drawZone(sig.price, sig.shortLevels.tp, 'rgba(255,179,71,0.10)');
+      drawZone(sig.price, sig.shortLevels.sl, 'rgba(255,61,90,0.10)');
+      drawLevelLine(sig.shortLevels.tp, 'rgba(255,179,71,0.85)', 'TP (short, info)');
+      drawLevelLine(sig.shortLevels.sl, 'rgba(255,61,90,0.85)', 'SL (short, info)');
+      drawLevelLine(sig.price,          'rgba(255,255,255,0.55)', 'POZIOM (SHORT — INFO, nie wykonywany)', [2,2]);
+      rrText = { text: 'R:R 1:' + sig.shortLevels.rr + ' (informacyjnie)', color: 'rgba(255,179,71,0.95)', dir: 'SHORT (info)' };
+    }
 
     // Grid
     ctx.strokeStyle = 'rgba(255,95,0,0.07)'; ctx.lineWidth = 1;
@@ -4719,6 +4770,28 @@ var INLINE_CHART = {
     for(var di=0;di<n;di+=step){
       var d=new Date(klines[di].t), mx=PAD.l+di*bGap+bGap/2;
       ctx.fillText((d.getMonth()+1)+'/'+(d.getDate()), mx, H-PAD.b+14);
+    }
+
+    // ── Panel R:R + kierunek sygnału (na wierzchu, prawy górny róg) ────
+    if (rrText) {
+      var boxW = 150, boxH = 40, boxX = W-PAD.r-boxW-6, boxY = PAD.t+6;
+      ctx.fillStyle = 'rgba(10,14,22,0.85)'; ctx.strokeStyle = rrText.color; ctx.lineWidth = 1;
+      ctx.fillRect(boxX, boxY, boxW, boxH); ctx.strokeRect(boxX, boxY, boxW, boxH);
+      ctx.fillStyle = rrText.color; ctx.font = 'bold 9.5px Inter,sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(rrText.dir, boxX+8, boxY+16);
+      ctx.font = '8.5px JetBrains Mono,monospace';
+      ctx.fillText(rrText.text, boxX+8, boxY+31);
+      // Strzałka kierunku na ostatniej świecy
+      var lastX = PAD.l+(n-1)*bGap+bGap/2;
+      var lastY = yP(klines[n-1].c);
+      ctx.fillStyle = rrText.color;
+      ctx.beginPath();
+      if (rrText.dir === 'LONG') {
+        ctx.moveTo(lastX, lastY-14); ctx.lineTo(lastX-6, lastY-4); ctx.lineTo(lastX+6, lastY-4);
+      } else {
+        ctx.moveTo(lastX, lastY+14); ctx.lineTo(lastX-6, lastY+4); ctx.lineTo(lastX+6, lastY+4);
+      }
+      ctx.closePath(); ctx.fill();
     }
   }
 };

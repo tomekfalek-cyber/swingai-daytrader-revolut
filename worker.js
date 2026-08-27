@@ -821,13 +821,24 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const pp       = pairParams[sym] || PAIR_PARAMS_DEFAULT[sym] || null;
   const minScore = (pp ? pp.minScore : adaptiveMinScore) + regimeMinScoreAdj;
   const buy      = finalProb >= minScore / 100;
+  // Sygnal SHORT - wylacznie informacyjny (Revolut X nie obsluguje marginu/shortow,
+  // wiec bot NIGDY nie wykonuje realnej krotkiej sprzedazy). Wymaga symetrycznie
+  // niskiego finalProb ORAZ potwierdzenia niedzwiedziej struktury SMC - samo niskie
+  // prawdopodobienstwo bez potwierdzenia struktury to za slaby sygnal do pokazania.
+  const shortSignal = finalProb <= (1 - minScore/100)
+    && (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || liqSweep && liqSweep.type === 'bearish');
+  const shortLevels = shortSignal ? {
+    tp: price * (1 - Math.max(cfg.tp, atrD/price*2.5)),
+    sl: price * (1 + Math.max(cfg.sl, atrD/price*1.5)),
+    rr: (Math.max(cfg.tp, atrD/price*2.5) / Math.max(cfg.sl, atrD/price*1.5)).toFixed(1)
+  } : null;
 
   return {
     sym, price,
     rsiD: +rsiD.toFixed(1), rsi4h: +rsi4h.toFixed(1), rsi1h: +rsi1h.toFixed(1), confirm1h,
     macdHist: macdD.hist, macdLine: macdD.line,
     bbPos: bbD.pos, trendD, ema50, ema200, atrD,
-    score, finalProb: +finalProb.toFixed(3), buy,
+    score, finalProb: +finalProb.toFixed(3), buy, shortSignal, shortLevels,
     nbPred, gbmProb: +gbmProb.toFixed(3), qlSugg, aiMethod,
     obiRatio: obiData.ratio || 0.5, obiScore,
     patterns: patResult.patterns,
