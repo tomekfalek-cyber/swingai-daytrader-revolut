@@ -482,6 +482,15 @@ tr:hover td{background:rgba(123,97,255,.04);}
         <div class="kpi"><div class="k-val" id="sk-streak">--</div><div class="k-lbl">Passa (W/L)</div></div>
         <div class="kpi"><div class="k-val" id="sk-dur">--</div><div class="k-lbl">Avg czas (h)</div></div>
       </div>
+      <div style="padding:10px 12px 0;">
+        <div class="sec-t" style="margin-bottom:6px" title="Symulacja PAPER — Revolut X nie wykonuje realnych shortow, to hipotetyczna skutecznosc, gdyby bot mogl tez shortowac">📉 SHORT — symulacja skuteczności (informacyjnie)</div>
+        <div class="stat-kpi-grid">
+          <div class="kpi"><div class="k-val" id="sk-short-trades">0</div><div class="k-lbl">Transakcje</div></div>
+          <div class="kpi"><div class="k-val" id="sk-short-wr">--%</div><div class="k-lbl">Win Rate</div></div>
+          <div class="kpi"><div class="k-val" id="sk-short-avg">--</div><div class="k-lbl">Avg P/L %</div></div>
+          <div class="kpi"><div class="k-val" id="sk-short-pnl">$0</div><div class="k-lbl">Total P/L (hipotet.)</div></div>
+        </div>
+      </div>
       <div class="equity-wrap">
         <div class="sec-t" style="margin-bottom:6px">📈 Krzywa kapitału</div>
         <canvas id="equity-chart" height="110" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:6px;display:block;"></canvas>
@@ -776,7 +785,11 @@ let ST = {
   positions:[], trades:[], dailyPnl:0, dailyDate:'',
   dailyStartBalance:0,  // balans na początku dnia — limit strat liczony od tej wartości, nie "pływa" w górę
   cooldown:{}, globalBlockUntil:0, consLoss:0, paperBal:1000, iter:0,
-  peakBalance:0, drawdownBlock:0, stats:null
+  peakBalance:0, drawdownBlock:0, stats:null,
+  // Symulacja SHORT — TYLKO paper/statystyki. Revolut X nie obsluguje shortow,
+  // wiec to nigdy nie idzie do execBuy/execSell/realnego API — czysto informacyjne,
+  // zeby sprawdzic jak skuteczny bylby bot, gdyby mogl tez shortowac.
+  shortPositions:[], shortTrades:[]
 };
 let running=false, botTimer=null, nextScanAt=0, lastSigs=[], lastSignalData=null, cycleRunning=false, countdownTimer=null, cycleTimeoutTimer=null, wsExitQueueTimer=null;
 
@@ -2068,6 +2081,7 @@ setInterval(function() {
 // do nastepnego skanu, tylko sprawdza sie co najwyzej po 30s.
 setInterval(function() {
   if (running && ST.positions.length) checkPositions().catch(function(e){ log('checkPositions (fast poll) err: '+e.message,'warn'); });
+  if (running && CFG.mode==='paper' && ST.shortPositions.length) checkShortPositions().catch(function(e){ log('checkShortPositions (fast poll) err: '+e.message,'warn'); });
 }, 30000);
 
 function updateWSStatus(active) {
@@ -2184,8 +2198,8 @@ async function checkPositions() {
       if      (cp <= pos.sl)                        reason = 'STOP LOSS';
       else if (cp >= pos.tp)                        reason = 'TAKE PROFIT';
       else if (cp <= trail && pnlPct > 1.5)         reason = 'TRAILING STOP';
-      else if (pnlPct <= -12)                       reason = 'EMERGENCY STOP';
-      else if ((Date.now()-pos.entryTs)/864e5 > 7)  reason = 'TIMEOUT 7d';
+      else if (pnlPct <= -12)                          reason = 'EMERGENCY STOP';
+      else if ((Date.now()-pos.entryTs) > 8*3600000)   reason = 'TIMEOUT 8h';
 
       // Partial TP (50% pozycji przy polowie TP)
       if (!reason) {
@@ -2215,6 +2229,68 @@ async function checkPositions() {
         await closeTrade(pos, cp, reason);
       } else { pos.cp = cp; saveAll(); }
     } catch(e) { log('checkPos '+pos.sym+': '+e.message, 'err'); }
+  }
+}
+
+// ── SHORT — TYLKO symulacja paper, dla statystyk/skutecznosci ───────────────
+// Revolut X nie wspiera marginu/shortow, wiec to NIGDY nie woluje execBuy/
+// execSell ani zadnego realnego API. Czysta symulacja "co by bylo gdyby" —
+// zeby zmierzyc, jak skuteczny bylby bot po stronie short.
+function openShortPaper(sig) {
+  if (ST.shortPositions.some(function(p){ return p.sym===sig.sym; })) return;
+  if ((ST.cooldown[sig.sym]||0) > Date.now()) return;
+  if (ST.globalBlockUntil > Date.now()) return;
+  if (isPumpDump(sig)) return;
+  if (isVolumeAnomaly(sig)) return;
+  if (isDeadHour()) return;
+  if (corrBlocked(sig.sym)) return;
+  if (!sig.shortLevels) return;
+  ST.shortPositions.push({
+    sym: sig.sym, entry: sig.price, sl: sig.shortLevels.sl, tp: sig.shortLevels.tp,
+    lowP: sig.price, entryTs: Date.now(), score: sig.score, finalProb: sig.finalProb,
+    why: sig.why.join(', '), size: CFG.posSize
+  });
+  saveAll();
+  log('SHORT (symulacja) '+sig.sym+' @ '+fp(sig.price)+' TP='+fp(sig.shortLevels.tp)+' SL='+fp(sig.shortLevels.sl), 'info');
+}
+
+async function closeShortPaper(pos, price, reason) {
+  const idx = ST.shortPositions.indexOf(pos);
+  if (idx === -1) return;
+  ST.shortPositions.splice(idx, 1);
+  const grossPnlPct = (pos.entry-price)/pos.entry*100; // short: zysk gdy cena spada
+  const grossPnl     = pos.size * grossPnlPct/100;
+  const feeCost = pos.size*FEE + (pos.size+grossPnl)*FEE; // ten sam model round-trip co long
+  const pnl     = grossPnl - feeCost;
+  const pnlPct  = pnl/pos.size*100;
+  const durH    = ((Date.now()-pos.entryTs)/3600000).toFixed(1);
+  ST.shortTrades.unshift({sym:pos.sym, entry:pos.entry, exit:price, size:pos.size,
+    pnl:+pnl.toFixed(4), pnlPct:+pnlPct.toFixed(2), durH, reason, score:pos.score,
+    finalProb:pos.finalProb, ts:Date.now()});
+  if (ST.shortTrades.length > 300) ST.shortTrades = ST.shortTrades.slice(0, 300);
+  saveAll();
+  log('Zamknieto SHORT (symulacja) '+pos.sym+' — '+reason+' | P/L: '+(pnl>=0?'+':'')+'$'+pnl.toFixed(2)+' ('+pnlPct.toFixed(2)+'%)', pnl>=0?'ok':'warn');
+  renderPositions(); renderHistory(); renderStats();
+}
+
+async function checkShortPositions() {
+  for (const pos of [...ST.shortPositions]) {
+    try {
+      let cp = WS.isAlive() ? WS.getPrice(pos.sym) : null;
+      if (!cp) {
+        try { const t = await getTicker(pos.sym); cp = +t.lastPrice; if (cp > 0) pos.cp = cp; }
+        catch(e) { cp = pos.cp || pos.entry; if (!cp || cp <= 0) continue; }
+      }
+      if (cp < (pos.lowP||pos.entry)) pos.lowP = cp;
+      const pnlPct = (pos.entry-cp)/pos.entry*100;
+      let reason = null;
+      if      (cp >= pos.sl)                         reason = 'STOP LOSS';
+      else if (cp <= pos.tp)                         reason = 'TAKE PROFIT';
+      else if (pnlPct <= -12)                        reason = 'EMERGENCY STOP';
+      else if ((Date.now()-pos.entryTs) > 8*3600000) reason = 'TIMEOUT 8h';
+      if (reason) { await closeShortPaper(pos, cp, reason); }
+      else { pos.cp = cp; saveAll(); }
+    } catch(e) { log('checkShortPos '+pos.sym+': '+e.message, 'err'); }
   }
 }
 
@@ -2448,6 +2524,7 @@ async function botCycle() {
   gi('scan-spin').style.display = '';
 
   await checkPositions();
+  if (CFG.mode === 'paper') await checkShortPositions();
 
   // Drawdown Circuit Breaker
   var _curBal = ST.paperBal || 0;
@@ -2494,6 +2571,15 @@ async function botCycle() {
       if (!sigs[i].buy) continue;
       if (ST.positions.length >= CFG.maxPos) break;
       await openTrade(sigs[i], fg, btcDrop, cachedTotal, cachedUSDC);
+    }
+    // SHORT — TYLKO symulacja w PAPER, dla statystyk/skutecznosci (Revolut X i tak
+    // nie wykonuje realnych shortow, wiec w LIVE to nie ma zadnego sensu ani ryzyka).
+    if (CFG.mode === 'paper') {
+      for (let i=0; i<sigs.length; i++) {
+        if (!sigs[i].shortSignal) continue;
+        if (ST.shortPositions.length >= CFG.maxPos) break;
+        openShortPaper(sigs[i]);
+      }
     }
   }
 
@@ -2844,6 +2930,17 @@ function renderStats() {
       +'<td class="'+(+avgP>=0?'up':'dn')+'">'+(+avgP>=0?'+':'')+avgP+'%</td>'
       +'<td class="'+(s.p>=0?'up':'dn')+'">'+(s.p>=0?'+':'')+'$'+s.p.toFixed(2)+'</td></tr>';
   }).join('');
+
+  // ── SHORT (symulacja paper) — statystyki hipotetycznej skutecznosci ──────
+  const st=ST.shortTrades||[], sWins=st.filter(function(x){ return x.pnl>0; }).length;
+  const sWr=st.length?(sWins/st.length*100).toFixed(0):0;
+  const sAvg=st.length?(st.reduce(function(a,x){ return a+(x.pnlPct||0); },0)/st.length).toFixed(2):0;
+  const sTot=st.reduce(function(a,x){ return a+(x.pnl||0); },0);
+  setKpi('sk-short-trades',st.length,'val');
+  setKpi('sk-short-wr',sWr+'%','val '+(+sWr>=50?'up':'dn'));
+  setKpi('sk-short-avg',(+sAvg>=0?'+':'')+sAvg+'%','val '+(+sAvg>=0?'up':'dn'));
+  setKpi('sk-short-pnl',(sTot>=0?'+':'')+'$'+sTot.toFixed(2),'val '+(sTot>=0?'up':'dn'));
+
   setTimeout(drawEquity, 50);
 }
 
@@ -3058,7 +3155,7 @@ async function testConn() {
 
 function resetAll() {
   if (!confirm('Usunac wszystkie pozycje i historie?')) return;
-  ST.trades=[]; ST.positions=[]; ST.dailyPnl=0; ST.consLoss=0; ST.globalBlockUntil=0; ST.cooldown={}; ST.paperBal=CFG.paperBal; ST.dailyStartBalance=0;
+  ST.trades=[]; ST.positions=[]; ST.shortTrades=[]; ST.shortPositions=[]; ST.dailyPnl=0; ST.consLoss=0; ST.globalBlockUntil=0; ST.cooldown={}; ST.paperBal=CFG.paperBal; ST.dailyStartBalance=0;
   saveAll(); renderPositions(); renderHistory(); renderStats();
   gi('cfg-status').textContent='Reset'; log('Dane zresetowane','warn');
 }
