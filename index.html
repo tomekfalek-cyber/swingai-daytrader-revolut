@@ -1845,7 +1845,8 @@ function aiExplainSignal(sig) {
   const probPct = (prob*100).toFixed(1);
   const c = sig.buy ? 'var(--green)' : 'var(--text2)';
 
-  let html = '<b style="color:'+c+'">'+(sig.buy?'🟢 BUY ':'⚪ WAIT ')+'P(wzrost)='+probPct+'% | Score '+sig.score+'/100</b><br>';
+  let html = '<b style="color:var(--text3);font-size:7pt;letter-spacing:.5px">📈 LONG (kupno)</b><br>';
+  html += '<b style="color:'+c+'">'+(sig.buy?'🟢 BUY ':'⚪ WAIT ')+'P(wzrost)='+probPct+'% | Score '+sig.score+'/100</b><br>';
   html += '<span style="color:var(--text3);font-size:8pt">Metoda: '+(sig.aiMethod||'Score')+'</span><br>';
   html += 'Trend: '+trend+' | RSI(1H)='+sig.rsiD+' RSI(15min)='+sig.rsi4h+'<br>';
   html += 'MACD '+(sig.macdHist>0?'<span class="up">↑</span>':'<span class="dn">↓</span>')+' BB='+(sig.bbPos*100).toFixed(0)+'% 1H:'+(sig.confirm1h?'✓':'✗');
@@ -1898,6 +1899,7 @@ function buildShortExplainBlock(sig) {
   const probDownPct = (probDown*100).toFixed(1);
   const c = shortActive ? 'var(--red)' : 'var(--text2)';
   let html = '<hr style="border-color:var(--border);margin:8px 0;opacity:.4">';
+  html += '<b style="color:var(--text3);font-size:7pt;letter-spacing:.5px">📉 SHORT (sprzedaz)</b><br>';
   html += '<b style="color:'+c+'">'+(shortActive?'🔴 SHORT (informacyjnie) ':'⚪ Brak sygnalu short ')+'P(spadek)≈'+probDownPct+'%</b><br>';
   html += '<span style="color:var(--text3);font-size:7pt">Revolut X nie wykonuje realnych shortow — informacja/statystyka (symulacja PAPER)</span><br>';
   if (shortActive && sig.shortLevels) {
