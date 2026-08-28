@@ -10,7 +10,7 @@
 // Day trading: mniej par niz w wersji swingowej, bo skan jest 3x czestszy (co 3
 // min zamiast 10) - trzyma budzet zapytan/dzien i limit KV w bezpiecznych granicach
 // mimo wiekszej czestotliwosci. Najbardziej plynne pary, najlepsze dla intraday.
-const PAIRS = ['XBTUSDT','ETHUSDT','SOLUSDT'];
+const PAIRS = ['XBTUSDT','ETHUSDT','SOLUSDT','XRPUSDT'];
 const FEE   = 0.002;
 const TIMEOUT_MS = 8 * 3600000; // 8h - day trading: pozycja zamykana w ramach jednej sesji, nie tygodniami jak w swingu
 
@@ -23,15 +23,18 @@ const CORR_GROUPS = [
   ['LINKUSDT']
 ];
 
+// tp/sl przeskalowane ze starych wartosci swingowych (10-18%/4-7%) na skale
+// day-trading, proporcjonalnie do defaultConfig() (tp:0.02/sl:0.01) - relatywne
+// roznice miedzy parami (BTC najcieszej, DOGE najszerzej) zostaly zachowane.
 const PAIR_PARAMS_DEFAULT = {
-  'XBTUSDT':  { tp:0.10, sl:0.04, minScore:62 },
-  'ETHUSDT':  { tp:0.12, sl:0.05, minScore:60 },
-  'SOLUSDT':  { tp:0.14, sl:0.06, minScore:58 },
-  'XRPUSDT':  { tp:0.15, sl:0.06, minScore:58 },
-  'DOGEUSDT': { tp:0.18, sl:0.07, minScore:60 },
-  'ADAUSDT':  { tp:0.14, sl:0.06, minScore:58 },
-  'AVAXUSDT': { tp:0.14, sl:0.06, minScore:58 },
-  'LINKUSDT': { tp:0.14, sl:0.06, minScore:58 }
+  'XBTUSDT':  { tp:0.017, sl:0.008, minScore:62 },
+  'ETHUSDT':  { tp:0.020, sl:0.010, minScore:60 },
+  'SOLUSDT':  { tp:0.023, sl:0.012, minScore:58 },
+  'XRPUSDT':  { tp:0.025, sl:0.012, minScore:58 },
+  'DOGEUSDT': { tp:0.030, sl:0.014, minScore:60 },
+  'ADAUSDT':  { tp:0.023, sl:0.012, minScore:58 },
+  'AVAXUSDT': { tp:0.023, sl:0.012, minScore:58 },
+  'LINKUSDT': { tp:0.023, sl:0.012, minScore:58 }
 };
 
 // Revolut X base URL
@@ -110,12 +113,14 @@ export default {
       cfg.active = true; cfg.mode = 'live'; cfg.startedAt = Date.now();
       cfg.revxApiKey  = p.get('key')   || '';
       cfg.revxPrivKey = p.get('priv')  || '';
-      cfg.tp    = parseFloat(p.get('tp')   || '12') / 100;
-      cfg.sl    = parseFloat(p.get('sl')   || '5')  / 100;
-      cfg.trail = parseFloat(p.get('trail')|| '6')  / 100;
+      cfg.tp    = parseFloat(p.get('tp')   || '2') / 100;
+      cfg.sl    = parseFloat(p.get('sl')   || '1')  / 100;
+      cfg.trail = parseFloat(p.get('trail')|| '0.8')  / 100;
       cfg.minScore = parseInt(p.get('score')|| '58');
       cfg.maxPos   = parseInt(p.get('maxp') || '4');
       cfg.posSize  = parseFloat(p.get('size')|| '15');
+      cfg.riskPct  = parseFloat(p.get('riskPct')|| '2');
+      cfg.fgMin    = parseInt(p.get('fgMin')|| '20');
       cfg.tgToken  = p.get('tg')   || '';
       cfg.tgChat   = p.get('tgc')  || '';
       // Jeśli klucze puste - zachowaj z poprzedniej konfiguracji
@@ -155,6 +160,8 @@ export default {
       if (p.get('score')) cfg.minScore = parseInt(p.get('score'));
       if (p.get('maxp'))  cfg.maxPos   = parseInt(p.get('maxp'));
       if (p.get('size'))  cfg.posSize  = parseFloat(p.get('size'));
+      if (p.get('riskPct')) cfg.riskPct = parseFloat(p.get('riskPct'));
+      if (p.get('fgMin'))    cfg.fgMin   = parseInt(p.get('fgMin'));
       await env.SWINGAI_REVOLUT_KV.put('config', JSON.stringify(cfg));
       return new Response(redirectHTML('Konfiguracja zapisana!'), { headers: {'Content-Type':'text/html;charset=utf-8'} });
     }
@@ -235,7 +242,7 @@ export default {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: cfg.tgChat,
-              text: 'Witaj! SwingAI Bot 24/7 — Revolut X aktywny.\n\nPolaczenie dziala.\nPary: BTC ETH SOL XRP DOGE ADA AVAX LINK\nSkany co 1h przez Cloudflare Worker.',
+              text: 'Witaj! SwingAI Bot 24/7 — Revolut X aktywny.\n\nPolaczenie dziala.\nPary: BTC ETH SOL XRP\nSkany co 1h przez Cloudflare Worker.',
               parse_mode: 'HTML'
             })
           }
@@ -744,7 +751,8 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   if (divD.bear)  { score -= 12; why.push('RSI dywergen. niedzwiedzia 1H'); }
   if (div4h.bear) { score -= 7;  why.push('RSI dywergen. niedzwiedzia 4H'); }
 
-  if (trendD === -1 && rsiD > 50) { score = Math.min(score, 15); why.push('BESSA: brak long'); }
+  const bearBias = trendD === -1 && rsiD > 50;
+  if (bearBias) { score -= 30; why.push('BESSA: long wymaga silnego potwierdzenia'); }
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   if (price > vwap4h) { score += 8;  why.push('Ponad VWAP'); }
@@ -797,7 +805,8 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const qlSugg  = ql.suggests(qlSig);
   let qlBonus = 0;
   if (qlSugg) {
-    if (qlSugg.action === 'BUY' && qlSugg.confidence > 0.05) { qlBonus = 8; why.push('QL: BUY'); }
+    if (qlSugg.action === 'BUY'  && qlSugg.confidence > 0.05) { qlBonus =  8; why.push('QL: BUY'); }
+    if (qlSugg.action === 'HOLD' && qlSugg.confidence > 0.05) { qlBonus = -10; why.push('QL: czekac'); }
     score = Math.max(0, Math.min(100, score + qlBonus));
   }
 
@@ -828,7 +837,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   // niskiego finalProb ORAZ potwierdzenia niedzwiedziej struktury SMC - samo niskie
   // prawdopodobienstwo bez potwierdzenia struktury to za slaby sygnal do pokazania.
   const shortSignal = finalProb <= (1 - minScore/100)
-    && (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || liqSweep && liqSweep.type === 'bearish');
+    && (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || liqSweep && liqSweep.type === 'bearish' || bearBias);
   const shortLevels = shortSignal ? {
     tp: price * (1 - Math.max(cfg.tp, atrD/price*2.5)),
     sl: price * (1 + Math.max(cfg.sl, atrD/price*1.5)),
@@ -854,7 +863,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
       orderBlocks: orderBlocks.slice(-3), fvgs: fvgs.slice(-3),
       liqSweep, premiumDiscount: premDisc.zone, pdPct: +premDisc.pct.toFixed(3)
     },
-    levels: calcDynamicLevels(price, atrD, cfg)
+    levels: calcDynamicLevels(price, atrD, cfg, pp)
   };
 }
 
@@ -985,7 +994,8 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   if (posSize < minSize) {
     addLog(state, 'Za mala pozycja (' + posSize.toFixed(2) + '$) — pomijam ' + sig.sym, 'warn'); return;
   }
-  const levels = calcDynamicLevels(adjSig.price, adjSig.atrD, cfg);
+  const pp     = (state.pairParams||{})[sig.sym] || PAIR_PARAMS_DEFAULT[sig.sym];
+  const levels = calcDynamicLevels(adjSig.price, adjSig.atrD, cfg, pp);
 
   addLog(state,
     'BUY ' + adjSig.sym + ' @ ' + adjSig.price.toFixed(4) +
@@ -1000,7 +1010,7 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
     try {
       const res = await revxMarketBuy(adjSig.sym, posSize, cfg);
       const execP = res.price || adjSig.price;
-      const el    = calcDynamicLevels(execP, adjSig.atrD, cfg);
+      const el    = calcDynamicLevels(execP, adjSig.atrD, cfg, pp);
       state.positions.push(buildPosition(adjSig, execP, res.qty, el, posSize, ql));
       if (!state.dailyStartBalance || state.dailyStartBalance <= 0) {
         try {
@@ -1111,7 +1121,7 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
   const _reasonPL = reason === 'TAKE PROFIT' ? 'REALIZACJA ZYSKU' :
     reason === 'STOP LOSS' ? 'STOP LOSS AKTYWOWANY' :
     reason === 'TRAILING STOP' ? 'STOP KROCZACY' :
-    reason === 'TIMEOUT 7d' ? 'KONIEC CZASU (7 dni)' : reason;
+    reason === 'TIMEOUT 8h' ? 'KONIEC CZASU (8h)' : reason;
   await tgSend(cfg,
     (pnl>=0?'[+]':'[-]') + ' ' + _reasonPL + ' — ' + _closeSym + '\n\n' +
     'Wynik: ' + (pnl>=0?'+':'') + '$' + pnl.toFixed(2) + ' (' + pnlPct.toFixed(2) + '%)\n' +
@@ -1200,10 +1210,12 @@ function kellySize(cfg, state, total) {
   return Math.min(fixedSize, sz, safeTotal * 0.20);
 }
 
-function calcDynamicLevels(price, atrD, cfg) {
+function calcDynamicLevels(price, atrD, cfg, pp) {
   const atrPct   = atrD / price;
-  const tpOffset = Math.max(cfg.tp,   atrPct * 2.5);
-  const slOffset = Math.max(cfg.sl,   atrPct * 1.5);
+  const cfgTp    = (pp && pp.tp != null) ? pp.tp : cfg.tp;
+  const cfgSl    = (pp && pp.sl != null) ? pp.sl : cfg.sl;
+  const tpOffset = Math.max(cfgTp,   atrPct * 2.5);
+  const slOffset = Math.max(cfgSl,   atrPct * 1.5);
   const trail    = Math.max(cfg.trail, atrPct * 1.2);
   const tp    = price * (1 + tpOffset);
   const sl    = price * (1 - slOffset);
