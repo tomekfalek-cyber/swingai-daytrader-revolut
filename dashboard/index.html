@@ -1884,6 +1884,31 @@ function aiExplainSignal(sig) {
   if (sig.buy && sig.why) {
     html += '<br><span style="color:var(--text3);font-size:7.5pt">'+sig.why.filter(function(w){ return !w.includes('Hammer')&&!w.includes('Engulfing')&&!w.includes('Star'); }).slice(0,3).join(' • ')+'</span>';
   }
+  html += buildShortExplainBlock(sig);
+  return html;
+}
+
+// ── SHORT — dolna czesc "Ostatni sygnal AI": info czy warto by bylo shortowac ──
+// Rewolut X nie wykonuje realnych shortow — to wylacznie informacja/statystyka
+// (patrz symulacja PAPER w ST.shortPositions/ST.shortTrades).
+function buildShortExplainBlock(sig) {
+  const shortActive = !!sig.shortSignal;
+  const prob     = sig.finalProb !== undefined ? sig.finalProb : sig.score/100;
+  const probDown = (1-prob*1); // prosty odpowiednik "P(spadek)" wzgledem P(wzrost) z gornej czesci
+  const probDownPct = (probDown*100).toFixed(1);
+  const c = shortActive ? 'var(--red)' : 'var(--text2)';
+  let html = '<hr style="border-color:var(--border);margin:8px 0;opacity:.4">';
+  html += '<b style="color:'+c+'">'+(shortActive?'🔴 SHORT (informacyjnie) ':'⚪ Brak sygnalu short ')+'P(spadek)≈'+probDownPct+'%</b><br>';
+  html += '<span style="color:var(--text3);font-size:7pt">Revolut X nie wykonuje realnych shortow — informacja/statystyka (symulacja PAPER)</span><br>';
+  if (shortActive && sig.shortLevels) {
+    html += 'TP: <span class="up">'+fp(sig.shortLevels.tp)+'</span> | SL: <span class="dn">'+fp(sig.shortLevels.sl)+'</span> | R:R 1:'+sig.shortLevels.rr;
+  }
+  const bearWhy = (sig.why||[]).filter(function(w){ return /bessa|niedzwiedz|wykupiony|ryzyko|premium|opor|^!/i.test(w); });
+  if (bearWhy.length) {
+    html += '<br><span style="color:var(--text3);font-size:7.5pt">'+bearWhy.slice(0,3).join(' • ')+'</span>';
+  } else if (!shortActive) {
+    html += '<br><span style="color:var(--text3);font-size:7.5pt">Brak wyraznych sygnalow niedzwiedzich w tym momencie</span>';
+  }
   return html;
 }
 
@@ -1924,6 +1949,35 @@ function aiExplainPosition(pos, sig) {
   else if (+pnlPct > -(CFG.sl*100*0.5))   { rec='Lekko pod wodą — SL chroni kapital. Obserwuj trend.';      recC='var(--gold)'; }
   else                                    { rec='Blisko SL ('+fp(pos.sl)+'). Bot zamknie automatycznie.';    recC='var(--red)'; }
   const recHTML = '<div class="ai-section-title" style="margin-top:14px">Rekomendacja</div><p style="color:'+recC+';line-height:1.8">'+rec+'</p><p style="margin-top:6px;font-size:8.5pt;color:var(--text3)">R:R = '+(CFG.tp/CFG.sl).toFixed(1)+':1 | Bot zarządza automatycznie</p>';
+
+  return '<div class="ai-explain-block">'+entryHTML+'</div><div class="ai-explain-block">'+stateHTML+'</div><div class="ai-explain-block">'+indHTML+'</div><div class="ai-explain-block">'+recHTML+'</div>';
+}
+
+// ── Analiza AI dla symulowanej pozycji SHORT (paper, informacyjnie) ──────
+function aiExplainShortPosition(pos, sig) {
+  if (!pos || !pos.entry || pos.entry <= 0) return '<p>Brak danych pozycji.</p>';
+  const cp      = pos.cp || pos.entry;
+  const pnlPct  = ((pos.entry-cp)/pos.entry*100).toFixed(2); // short: zysk gdy cena spada
+  const pnl     = (pos.size ? pos.size*(+pnlPct)/100 : 0).toFixed(2);
+  const ageH    = ((Date.now()-pos.entryTs)/3600000).toFixed(1);
+  const distSL  = ((pos.sl-cp)/cp*100).toFixed(2);
+  const distTP  = ((cp-pos.tp)/cp*100).toFixed(2);
+  const sym     = pos.sym.replace('USDC','');
+  const tags    = (pos.why||'').split(', ').filter(Boolean).map(function(r){ return '<span class="ai-tag '+(/bessa|niedzwiedz|wykupiony|ryzyko|premium|opor|^!/i.test(r)?'ai-tag-r':'ai-tag-g')+'">'+r+'</span>'; }).join('');
+
+  const entryHTML = '<div class="ai-section-title">Dlaczego bot "wszedl" (symulacja SHORT)</div><p>Symulowana pozycja short <b>'+sym+'/USDC</b> przy <b>'+fp(pos.entry)+'</b> — score <b>'+pos.score+'/100</b>. <span style="color:var(--text3);font-size:7.5pt">Informacyjnie — Revolut X nie wykonuje realnych shortow.</span></p><div style="margin-top:4px">'+tags+'</div>';
+  const stateHTML = '<div class="ai-section-title" style="margin-top:14px">Stan pozycji</div><p>Otwarta <b>'+ageH+'h</b>. P/L (symulowane): <b class="'+(+pnlPct>=0?'up':'dn')+'">'+(+pnlPct>=0?'+':'')+pnlPct+'% ('+(+pnl>=0?'+':'')+'$'+pnl+')</b>.</p><p style="margin-top:5px">Do TP: <b class="up">+'+distTP+'%</b> (cena musi spadac) | Do SL: <b class="dn">-'+distSL+'%</b> (cena musi rosnac)</p>';
+  let indHTML = '<div class="ai-section-title" style="margin-top:14px">Wskazniki + AI</div>';
+  if (sig) {
+    indHTML += buildGauge('RSI 1H', sig.rsiD||0, 0, 100, (sig.rsiD||50)>=65?'var(--green)':(sig.rsiD||50)<=35?'var(--red)':'var(--accent)');
+    indHTML += buildGauge('RSI 4H', sig.rsi4h||0,0, 100, (sig.rsi4h||50)>=65?'var(--green)':(sig.rsi4h||50)<=35?'var(--red)':'var(--accent)');
+    if (sig.finalProb!==undefined) indHTML += buildGauge('Ensemble P(spadek)', +((1-sig.finalProb)*100).toFixed(0), 0, 100, (1-sig.finalProb)>0.55?'var(--green)':(1-sig.finalProb)<0.45?'var(--red)':'var(--gold)');
+  }
+  let rec='', recC='var(--text2)';
+  if      (+pnlPct > 3)  { rec='W zysku (symulacja) — cena spada zgodnie z oczekiwaniem.';  recC='var(--green)'; }
+  else if (+pnlPct > -1) { rec='Neutralnie — obserwuj rozwoj sytuacji.';                     recC='var(--gold)'; }
+  else                    { rec='Pod woda (symulacja) — blisko SL ('+fp(pos.sl)+').';         recC='var(--red)'; }
+  const recHTML = '<div class="ai-section-title" style="margin-top:14px">Rekomendacja</div><p style="color:'+recC+';line-height:1.8">'+rec+'</p><p style="margin-top:6px;font-size:8.5pt;color:var(--text3)">To symulacja PAPER wylacznie do statystyk — bot nie wykonuje realnych shortow.</p>';
 
   return '<div class="ai-explain-block">'+entryHTML+'</div><div class="ai-explain-block">'+stateHTML+'</div><div class="ai-explain-block">'+indHTML+'</div><div class="ai-explain-block">'+recHTML+'</div>';
 }
@@ -2729,6 +2783,14 @@ function openAiExplain(sym) {
   gi('modal-ai').className = 'overlay open';
   setTimeout(function(){ gi('ai-modal-body').innerHTML = aiExplainPosition(pos, sig); }, 400);
 }
+function openAiExplainShort(sym) {
+  const pos = (ST.shortPositions||[]).find(function(p){ return p.sym===sym; }); if (!pos) return;
+  const sig = lastSigs.find(function(s){ return s.sym===sym; }) || null;
+  gi('ai-modal-title').textContent = 'Analiza AI (SHORT, symulacja) — '+sym.replace('USDC','')+'/USDC';
+  gi('ai-modal-body').innerHTML = '<div class="ai-loading">Generuje analize...</div>';
+  gi('modal-ai').className = 'overlay open';
+  setTimeout(function(){ gi('ai-modal-body').innerHTML = aiExplainShortPosition(pos, sig); }, 400);
+}
 function openAiSignalModal() {
   if (!lastSignalData) return;
   const sig = lastSignalData;
@@ -2924,6 +2986,7 @@ function renderShortPositions() {
       +'<div class="pos-stat"><div class="l"><span class="up">TP</span></div><div class="v up" style="font-size:9pt">'+fp(pos.tp)+' <span style="font-size:8pt;opacity:.7">(+'+distTP+'%)</span></div></div>'
       +'</div>'
       +'<div class="pos-footer">'
+      +'<button class="ai-btn" onclick="openAiExplainShort(\''+pos.sym+'\')">🧠 Analiza AI</button>'
       +'<button class="stop-btn" onclick="manualCloseShort(\''+pos.sym+'\')" style="font-size:8pt;padding:2px 9px">Zamknij</button>'
       +'<span style="margin-left:auto;font-size:8pt;color:var(--text3)">PAPER — informacyjnie</span>'
       +'</div></div>';
