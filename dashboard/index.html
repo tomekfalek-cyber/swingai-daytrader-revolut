@@ -2128,7 +2128,6 @@ function corrBlocked(sym) {
 //  Trailing = 1.2 x ATR (zamiast stałego %)
 // ═══════════════════════════════════════════════════════════════════
 function calcDynamicLevels(price, atrVal, fee, pp) {
-  fee = fee || FEE;
   if (!price || price <= 0) return { tp: 0, sl: 0, trail: CFG.trail, rr: 0, atrPct: 0 };
   var cfgTp = (pp && pp.tp != null) ? pp.tp/100 : CFG.tp;
   var cfgSl = (pp && pp.sl != null) ? pp.sl/100 : CFG.sl;
@@ -2139,11 +2138,12 @@ function calcDynamicLevels(price, atrVal, fee, pp) {
   slDist = Math.max(slDist, price * 0.001); // min 0.1% aby uniknąć dzielenia przez 0
   // Upewnij sie ze R:R >= 1.5:1
   if (tpDist / slDist < 1.5) tpDist = slDist * 1.8;
-  // FEE dodajemy do dystansu (nie do ceny końcowej), żeby uniknąć podwójnego naliczenia
-  // tp = price + tpDist + fee*price; sl = price - slDist - fee*price
+  // Fee NIE jest tu wbudowana w poziom (byla by to tylko 1 z 2 nog round-tripu) -
+  // realny koszt (kupno+sprzedaz) jest poprawnie odliczany raz, w closeTrade(), tak
+  // samo jak w worker.js. Poziomy TP/SL odzwierciedlaja czysty, nominalny target.
   return {
-    tp:     price + tpDist + fee * price,
-    sl:     price - slDist - fee * price,
+    tp:     price + tpDist,
+    sl:     price - slDist,
     trail:  Math.max(CFG.trail, 1.2 * atr14 / price),
     rr:     +(tpDist / slDist).toFixed(2),
     atrPct: +(atr14/price*100).toFixed(2)
@@ -2267,10 +2267,15 @@ async function closeTrade(pos, price, reason) {
   ST.positions.splice(idx, 1);
   log('Zamykam '+pos.sym+' — '+reason, reason.includes('PROFIT')?'ok':'warn');
   try {
-    const res    = await execSell(pos.sym, pos.qty);
-    const ep     = res.price || price;
-    const pnl    = (ep-pos.entry)*pos.qty;
-    const pnlPct = (ep-pos.entry)/pos.entry*100;
+    const res      = await execSell(pos.sym, pos.qty);
+    const ep       = res.price || price;
+    // Realny round-trip koszt (kupno+sprzedaz), ta sama formula co w worker.js -
+    // bez tego statystyki (win rate, avg P/L) i samo-uczenie AI (ADAPTIVE, PAIR_PARAMS,
+    // ENSEMBLE_W) kalibrowaly by sie na sztucznie zawyzonym, nierealnym wyniku.
+    const grossPnl = (ep-pos.entry)*pos.qty;
+    const feeCost  = pos.size*FEE + (pos.size+grossPnl)*FEE;
+    const pnl      = grossPnl - feeCost;
+    const pnlPct   = pnl/pos.size*100;
     const durH   = ((Date.now()-pos.entryTs)/3600000).toFixed(1);
     ST.dailyPnl += pnl;
     if (pnl < 0) {
