@@ -509,6 +509,15 @@ tr:hover td{background:rgba(123,97,255,.04);}
           <tbody id="pair-body"></tbody>
         </table>
       </div>
+      <div style="padding:0 12px 12px;">
+        <div class="sec-t" style="margin-bottom:6px">📜 Historia transakcji — dlaczego bot wyszedł z pozycji (longi i symulacje short)</div>
+        <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Czas</th><th>Para</th><th>Kier.</th><th>Wejście</th><th>Wyjście</th><th>P/L %</th><th>P/L $</th><th>Powód wyjścia</th></tr></thead>
+          <tbody id="trade-history-body"></tbody>
+        </table>
+        </div>
+      </div>
     </div>
 
     <!-- MARKET -->
@@ -3062,7 +3071,50 @@ function renderStats() {
   setKpi('sk-short-avg',(+sAvg>=0?'+':'')+sAvg+'%','val '+(+sAvg>=0?'up':'dn'));
   setKpi('sk-short-pnl',(sTot>=0?'+':'')+'$'+sTot.toFixed(2),'val '+(sTot>=0?'up':'dn'));
 
+  renderTradeHistory();
   setTimeout(drawEquity, 50);
+}
+
+// Czytelne wyjaśnienie KAŻDEGO powodu, dla którego bot zamknął pozycję (long
+// lub symulację short) - żeby zawsze było jasne DLACZEGO, nie tylko JAKI kod.
+function reasonExplain(reason) {
+  var r = (reason||'').toUpperCase();
+  if (r.indexOf('TAKE PROFIT')>=0 || r==='TP')
+    return { label:'Take Profit', text:'Cena osiągnęła zaplanowany poziom zysku — pozycja zamknięta zgodnie z planem.' };
+  if (r.indexOf('TRAILING')>=0)
+    return { label:'Trailing Stop', text:'Cena cofnęła się od szczytu o ustaloną odległość — bot zabezpieczył część wypracowanego zysku.' };
+  if (r.indexOf('STOP LOSS')>=0 || r==='SL')
+    return { label:'Stop Loss', text:'Cena spadła do poziomu stop-loss — pozycja zamknięta, by ograniczyć stratę do zaplanowanego limitu.' };
+  if (r.indexOf('EMERGENCY')>=0)
+    return { label:'Stop awaryjny', text:'Wykryto nietypową sytuację (np. błąd danych/API) — bot zamknął pozycję ostrożnościowo.' };
+  if (r.indexOf('TIMEOUT')>=0)
+    return { label:'Timeout 8h', text:'Pozycja przekroczyła maksymalny czas trzymania (8h, day trading) bez osiągnięcia TP/SL — zamknięta po cenie rynkowej.' };
+  if (r === 'MANUAL' || r.indexOf('RĘCZ')>=0 || r.indexOf('RECZ')>=0)
+    return { label:'Ręcznie', text:'Pozycja zamknięta ręcznie przez użytkownika.' };
+  return { label: reason||'—', text:'Powód: '+(reason||'nieznany') };
+}
+function renderTradeHistory() {
+  var body = gi('trade-history-body'); if (!body) return;
+  var longRows  = (ST.trades||[]).map(function(x){ return Object.assign({dir:'LONG'}, x); });
+  var shortRows = (ST.shortTrades||[]).map(function(x){ return Object.assign({dir:'SHORT'}, x); });
+  var all = longRows.concat(shortRows).sort(function(a,b){ return (b.ts||0)-(a.ts||0); }).slice(0, 60);
+  if (!all.length) { body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--text3)">Brak zamkniętych transakcji</td></tr>'; return; }
+  body.innerHTML = all.map(function(x) {
+    var rx = reasonExplain(x.reason);
+    var dirC = x.dir==='LONG' ? 'up' : 'gold';
+    var pnlC = (x.pnl||0)>=0 ? 'up' : 'dn';
+    var time = x.ts ? new Date(x.ts).toLocaleString('pl-PL', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+    return '<tr title="'+rx.text.replace(/"/g,'&quot;')+'">'
+      + '<td style="font-size:8pt;color:var(--text3)">'+time+'</td>'
+      + '<td><b>'+(x.sym||'').replace('USDC','')+'</b></td>'
+      + '<td class="'+dirC+'">'+x.dir+(x.dir==='SHORT'?' <span style="font-size:7.5pt;color:var(--text3)">(sym.)</span>':'')+'</td>'
+      + '<td>'+fp(x.entry)+'</td>'
+      + '<td>'+fp(x.exit)+'</td>'
+      + '<td class="'+pnlC+'">'+((x.pnlPct||0)>=0?'+':'')+(x.pnlPct||0).toFixed(2)+'%</td>'
+      + '<td class="'+pnlC+'">'+((x.pnl||0)>=0?'+':'')+'$'+(x.pnl||0).toFixed(2)+'</td>'
+      + '<td style="font-size:8.5pt"><b>'+rx.label+'</b><br><span style="color:var(--text3);font-size:7.5pt">'+rx.text+'</span></td>'
+      + '</tr>';
+  }).join('');
 }
 
 function drawEquity() {
