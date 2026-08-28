@@ -423,6 +423,13 @@ tr:hover td{background:rgba(123,97,255,.04);}
           <div style="font-size:9pt">Bot aktywnie szuka setupów intraday na TF 1H + 15min + 5min</div>
         </div>
         <div id="pos-cards"></div>
+        <div id="short-pos-area" style="margin-top:16px;" title="Symulacja PAPER — Revolut X nie wykonuje realnych shortow, to hipotetyczna skutecznosc">
+          <div class="sec-t" style="padding:0 14px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+            📉 SHORT (symulacja, tylko PAPER) <span id="short-pos-badge" class="badge bacc" style="padding:1px 5px;font-size:7pt">0</span>
+          </div>
+          <div id="short-pos-empty" style="padding:20px;text-align:center;color:var(--text3);font-size:9pt;">Brak otwartych symulacji short</div>
+          <div id="short-pos-cards"></div>
+        </div>
       </div>
     </div>
 
@@ -2252,6 +2259,7 @@ function openShortPaper(sig) {
   });
   saveAll();
   log('SHORT (symulacja) '+sig.sym+' @ '+fp(sig.price)+' TP='+fp(sig.shortLevels.tp)+' SL='+fp(sig.shortLevels.sl), 'info');
+  renderShortPositions();
 }
 
 async function closeShortPaper(pos, price, reason) {
@@ -2270,7 +2278,7 @@ async function closeShortPaper(pos, price, reason) {
   if (ST.shortTrades.length > 300) ST.shortTrades = ST.shortTrades.slice(0, 300);
   saveAll();
   log('Zamknieto SHORT (symulacja) '+pos.sym+' — '+reason+' | P/L: '+(pnl>=0?'+':'')+'$'+pnl.toFixed(2)+' ('+pnlPct.toFixed(2)+'%)', pnl>=0?'ok':'warn');
-  renderPositions(); renderHistory(); renderStats();
+  renderShortPositions(); renderHistory(); renderStats();
 }
 
 async function checkShortPositions() {
@@ -2586,6 +2594,7 @@ async function botCycle() {
   renderMarketTab(sigs);
   await updateHeader();
   renderPositions();
+  renderShortPositions();
   renderHistory();
   renderStats();
   renderCooldowns();
@@ -2881,6 +2890,53 @@ function renderPositions() {
   }).join('');
 }
 
+function renderShortPositions() {
+  const cards = gi('short-pos-cards'), empty = gi('short-pos-empty'), badge = gi('short-pos-badge');
+  const list = ST.shortPositions || [];
+  if (badge) badge.textContent = list.length;
+  if (!list.length) { if (empty) empty.style.display=''; if (cards) cards.innerHTML=''; return; }
+  if (empty) empty.style.display = 'none';
+  cards.innerHTML = list.map(function(pos) {
+    const cp = pos.cp || pos.entry || 0;
+    const safeEntry = pos.entry || 1;
+    const pnlPct = isFinite(cp) && safeEntry > 0 ? (safeEntry-cp)/safeEntry*100 : 0; // short: zysk gdy cena spada
+    const pnl = pos.size ? pos.size * pnlPct/100 : 0;
+    const ageH = ((Date.now()-pos.entryTs)/3600000).toFixed(1);
+    const distTP = (isFinite(cp) && cp > 0) ? ((cp-pos.tp)/cp*100).toFixed(1) : '--';
+    const distSL = (isFinite(cp) && cp > 0) ? ((pos.sl-cp)/cp*100).toFixed(1) : '--';
+    return '<div class="pos-card '+(pnlPct>=0?'profit':'loss')+'" style="border-color:rgba(255,179,71,.35)">'
+      +'<div class="pos-hdr">'
+      +'<div class="score-ring" style="background:linear-gradient(135deg,#7a5000,#ffb347);color:#fff;border:none">'+(pos.score||0)+'</div>'
+      +'<div><div class="pos-sym">'+pos.sym.replace('USDC','')+'<small style="color:var(--text3);font-size:9pt;font-family:\'Inter\',sans-serif;font-weight:400">/USDC — SHORT (sym.)</small></div>'
+      +'<div style="font-size:7.5pt;color:var(--text3)">'+((pos.why||'').substring(0,60))+'</div></div>'
+      +'<div style="margin-left:auto;text-align:right">'
+      +'<div style="font-size:18pt;font-weight:900;font-family:\'JetBrains Mono\',monospace" class="'+(pnlPct>=0?'up':'dn')+'">'+(pnlPct>=0?'+':'')+pnlPct.toFixed(2)+'%</div>'
+      +'<div style="font-size:9pt;font-family:\'JetBrains Mono\',monospace" class="'+(pnl>=0?'up':'dn')+'">'+(pnl>=0?'+':'')+'$'+pnl.toFixed(2)+'</div></div></div>'
+      +'<div class="pos-body">'
+      +'<div class="pos-stat"><div class="l">Wejście</div><div class="v">'+fp(pos.entry)+'</div></div>'
+      +'<div class="pos-stat"><div class="l">Cena bieżąca</div><div class="v">'+fp(cp)+'</div></div>'
+      +'<div class="pos-stat"><div class="l">Wielkość (sym.)</div><div class="v" style="font-size:9pt">$'+(pos.size||0).toFixed(2)+'</div></div>'
+      +'<div class="pos-stat"><div class="l">Czas</div><div class="v" style="font-size:9pt">'+ageH+'h</div></div>'
+      +'</div>'
+      +'<div style="height:1px;background:var(--border);margin:0 14px"></div>'
+      +'<div class="pos-body">'
+      +'<div class="pos-stat"><div class="l"><span class="dn">SL</span></div><div class="v dn" style="font-size:9pt">'+fp(pos.sl)+' <span style="font-size:8pt;opacity:.7">(-'+distSL+'%)</span></div></div>'
+      +'<div class="pos-stat"><div class="l"><span class="up">TP</span></div><div class="v up" style="font-size:9pt">'+fp(pos.tp)+' <span style="font-size:8pt;opacity:.7">(+'+distTP+'%)</span></div></div>'
+      +'</div>'
+      +'<div class="pos-footer">'
+      +'<button class="stop-btn" onclick="manualCloseShort(\''+pos.sym+'\')" style="font-size:8pt;padding:2px 9px">Zamknij</button>'
+      +'<span style="margin-left:auto;font-size:8pt;color:var(--text3)">PAPER — informacyjnie</span>'
+      +'</div></div>';
+  }).join('');
+}
+
+async function manualCloseShort(sym) {
+  const pos = (ST.shortPositions||[]).find(function(p){ return p.sym===sym; });
+  if (!pos) return;
+  try { const t = await getTicker(sym); await closeShortPaper(pos, +t.lastPrice, 'MANUAL'); }
+  catch(e) { log('manualCloseShort '+sym+': '+e.message, 'err'); }
+}
+
 function renderHistory() {
   const tb = gi('hist-body');
   if (!ST.trades.length) { tb.innerHTML='<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--text3)">Brak historii</td></tr>'; return; }
@@ -3156,7 +3212,7 @@ async function testConn() {
 function resetAll() {
   if (!confirm('Usunac wszystkie pozycje i historie?')) return;
   ST.trades=[]; ST.positions=[]; ST.shortTrades=[]; ST.shortPositions=[]; ST.dailyPnl=0; ST.consLoss=0; ST.globalBlockUntil=0; ST.cooldown={}; ST.paperBal=CFG.paperBal; ST.dailyStartBalance=0;
-  saveAll(); renderPositions(); renderHistory(); renderStats();
+  saveAll(); renderPositions(); renderShortPositions(); renderHistory(); renderStats();
   gi('cfg-status').textContent='Reset'; log('Dane zresetowane','warn');
 }
 function deleteApiKeys(){if(!confirm('Usunac klucze Revolut X i Telegrama? Ustawienia bota pozostaja.'))return;CFG.revxApiKey='';CFG.revxPrivKey='';CFG.tgToken='';CFG.tgChat='';saveCfg();gi('cfg-revx-key').value='';gi('cfg-revx-priv').value='';gi('cfg-tg-token').value='';gi('cfg-tg-chat').value='';gi('cfg-status').textContent='Klucze usuniete';gi('cfg-status').style.color='var(--red)';log('Klucze API usuniete','warn');}
@@ -4758,7 +4814,7 @@ var _mb=gi('mode-badge'); _mb.textContent=CFG.mode.toUpperCase(); _mb.className=
 gi('st-mode').textContent = CFG.mode.toUpperCase();
 var _tge=gi('rb-tg'); if(_tge){ _tge.textContent=CFG.tgToken?'OK':'-'; _tge.className=CFG.tgToken?'val up':'val neu'; }
 var _rxe=gi('rb-exchange'); if(_rxe){ _rxe.textContent='Revolut X'; _rxe.className='val acc'; }
-renderPositions(); renderHistory(); renderStats(); renderCooldowns();
+renderPositions(); renderShortPositions(); renderHistory(); renderStats(); renderCooldowns();
 updateAIStatusPanel();
 // Zaladuj saldo i pokaz pary przy starcie strony
 (async function initUI(){
