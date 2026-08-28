@@ -420,7 +420,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
         <div id="pos-empty" style="padding:40px;text-align:center;color:var(--text3);">
           <div style="font-size:28pt;margin-bottom:10px">📭</div>
           <div style="font-size:11pt;margin-bottom:6px">Brak otwartych pozycji</div>
-          <div style="font-size:9pt">Bot aktywnie szuka setupów swing na TF Daily + 4H</div>
+          <div style="font-size:9pt">Bot aktywnie szuka setupów intraday na TF 1H + 15min + 5min</div>
         </div>
         <div id="pos-cards"></div>
       </div>
@@ -519,10 +519,9 @@ tr:hover td{background:rgba(123,97,255,.04);}
           </div>
           <div class="r2" style="margin-bottom:6px"><span class="lbl">Okres</span>
             <select id="bt-days" style="width:110px">
-              <option value="90">3 miesiące</option>
-              <option value="180">6 miesięcy</option>
-              <option value="365" selected>1 rok</option>
-              <option value="730">2 lata</option>
+              <option value="7">7 dni</option>
+              <option value="14" selected>14 dni</option>
+              <option value="30">30 dni</option>
             </select>
           </div>
           <div class="r2" style="margin-bottom:6px"><span class="lbl">Kapitał startowy $</span><input id="bt-capital" type="number" value="1000" style="width:80px"></div>
@@ -572,12 +571,12 @@ tr:hover td{background:rgba(123,97,255,.04);}
           </div>
           <div class="r2" style="margin-bottom:6px"><span class="lbl">Dni danych</span>
             <select id="ml-days" style="width:110px">
-              <option value="180">6 miesięcy</option>
-              <option value="365" selected>1 rok</option>
-              <option value="500">~16 miesięcy</option>
+              <option value="7">7 dni</option>
+              <option value="14" selected>14 dni</option>
+              <option value="30">30 dni</option>
             </select>
           </div>
-          <div class="r2" style="margin-bottom:6px"><span class="lbl">Cel zysku %</span><input id="ml-target" type="number" value="5" min="2" max="20" style="width:80px"> <small class="lbl">wzrost ceny w ciągu 10 dni</small></div>
+          <div class="r2" style="margin-bottom:6px"><span class="lbl">Cel zysku %</span><input id="ml-target" type="number" value="1.5" min="0.5" max="5" step="0.1" style="width:80px"> <small class="lbl">wzrost ceny w ciągu 12 świec (1H)</small></div>
           <button class="go" onclick="runMLOptimize()" id="ml-btn" style="width:100%;padding:7px;background:rgba(188,140,255,.15);color:var(--purple);border-color:var(--purple)">🧠 Trenuj model</button>
           <button onclick="applyMLWeights()" id="ml-apply" style="width:100%;padding:5px;margin-top:6px;display:none" class="ok-btn">✅ Zastosuj wagi w bocie</button>
           <button onclick="trainAllAI()" style="width:100%;padding:5px;margin-top:6px;background:rgba(63,185,80,.1);color:var(--green);border-color:var(--green)">&#128260; Trenuj NB + GBM na Gate.io</button>
@@ -659,7 +658,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
     <div class="sec-t">⚙️ Silnik AI — parametry</div>
     <div class="r2"><span class="lbl">Min Score/Prob BUY</span><span class="val gold" id="ai-minscore">62/100</span></div>
     <div class="r2"><span class="lbl">Metoda decyzyjna</span><span class="val acc" id="ai-method-lbl">Score</span></div>
-    <div class="r2"><span class="lbl">TF analizy</span><span class="val acc">Daily + 4H + 1H</span></div>
+    <div class="r2"><span class="lbl">TF analizy</span><span class="val acc">1H + 15min + 5min</span></div>
     <div class="r2"><span class="lbl">Formacje swiec</span><span class="val">8 wzorców</span></div>
     <div class="r2"><span class="lbl">Bessa blokada</span><span class="val dn">poniżej EMA200</span></div>
     <div class="r2"><span class="lbl">Adaptive thresh</span><span class="val" id="ai-adaptive-thresh">--</span></div>
@@ -715,8 +714,8 @@ tr:hover td{background:rgba(123,97,255,.04);}
   <h2 id="chart-title" style="display:flex;align-items:center;gap:10px">
     📊 Wykres — <span id="chart-sym"></span>
     <span style="margin-left:auto;display:flex;gap:6px">
-      <button onclick="setChartTF('1d')" class="chart-tf-btn on" data-tf="1d">D</button>
-      <button onclick="setChartTF('4h')" class="chart-tf-btn" data-tf="4h">4H</button>
+      <button onclick="setChartTF('5m')" class="chart-tf-btn on" data-tf="5m">5min</button>
+      <button onclick="setChartTF('15m')" class="chart-tf-btn" data-tf="15m">15min</button>
       <button onclick="setChartTF('1h')" class="chart-tf-btn" data-tf="1h">1H</button>
     </span>
   </h2>
@@ -1135,7 +1134,7 @@ function okxInstId(sym) { return sym.replace('USDC', '-USDC'); }
 
 // Adapter: pobierz świece OKX w formacie [ts,o,h,l,c,v]
 async function okxGetKlines(sym, tf, limit) {
-  const tfMap = {'1d':'1D','4h':'4H','1h':'1H','15m':'15m'};
+  const tfMap = {'1d':'1D','4h':'4H','1h':'1H','15m':'15m','5m':'5m'};
   const okxTf = tfMap[tf] || '1D';
   const d = await okxPub('/api/v5/market/candles', {instId:okxInstId(sym), bar:okxTf, limit:limit||200});
   // OKX: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
@@ -1445,7 +1444,10 @@ function atr(h,l,c,p=14) {
   if (h.length < p+1) return 0;
   const trs=[];
   for (let i=1; i<h.length; i++) trs.push(Math.max(h[i]-l[i], Math.abs(h[i]-c[i-1]), Math.abs(l[i]-c[i-1])));
-  return trs.slice(-p).reduce((a,b)=>a+b,0)/p;
+  if (trs.length < p) return trs.reduce((a,b)=>a+b,0)/(trs.length||1);
+  let a = trs.slice(0,p).reduce((x,y)=>x+y,0)/p;
+  for (let i=p; i<trs.length; i++) a = (a*(p-1)+trs[i])/p;
+  return a;
 }
 
 // ── RSI DYWERGENCJA ────────────────────────────────────────────────
@@ -1509,12 +1511,78 @@ function rsiArray(closes, period) {
 }
 
 // ── SWING ENGINE ───────────────────────────────────────────────────
+// ── SMART MONEY CONCEPTS (SMC) — identyczne jak w worker.js, zeby przegladarka
+// bez podlaczonego Workera (np. tryb tylko-GitHub-Pages) liczyla te same sygnaly.
+function detectOrderBlocks(o, h, l, c, atrVal) {
+  const blocks = []; const n = c.length;
+  for (let i = 2; i < n - 1; i++) {
+    const bodyImpulse = Math.abs(c[i+1] - o[i+1]);
+    const isImpulseUp   = c[i+1] > o[i+1] && bodyImpulse > atrVal * 1.5;
+    const isImpulseDown = c[i+1] < o[i+1] && bodyImpulse > atrVal * 1.5;
+    const isDownCandle  = c[i] < o[i], isUpCandle = c[i] > o[i];
+    if (isImpulseUp && isDownCandle) blocks.push({ type:'bullish', top:h[i], bottom:l[i], idx:i });
+    if (isImpulseDown && isUpCandle) blocks.push({ type:'bearish', top:h[i], bottom:l[i], idx:i });
+  }
+  return blocks.slice(-6);
+}
+function detectFVG(h, l, c) {
+  const gaps = []; const n = c.length;
+  for (let i = 2; i < n; i++) {
+    if (h[i-2] < l[i]) gaps.push({ type:'bullish', top:l[i], bottom:h[i-2], idx:i });
+    if (l[i-2] > h[i]) gaps.push({ type:'bearish', top:l[i-2], bottom:h[i], idx:i });
+  }
+  return gaps.slice(-6);
+}
+function detectLiquiditySweep(h, l, c, lookback) {
+  lookback = lookback || 20;
+  const n = c.length;
+  if (n < lookback + 3) return null;
+  const recentLow  = Math.min.apply(null, l.slice(-lookback-3, -3));
+  const recentHigh = Math.max.apply(null, h.slice(-lookback-3, -3));
+  const lastLow = l[n-1], lastHigh = h[n-1], lastClose = c[n-1];
+  if (lastLow < recentLow && lastClose > recentLow) return { type:'bullish', sweptLevel: recentLow };
+  if (lastHigh > recentHigh && lastClose < recentHigh) return { type:'bearish', sweptLevel: recentHigh };
+  return null;
+}
+function detectStructure(h, l, c, lookback) {
+  lookback = lookback || 30;
+  const n = c.length;
+  if (n < lookback) return { trend:'range', event:null };
+  const highs=[], lows=[];
+  for (let i = n-lookback+2; i < n-2; i++) {
+    if (h[i]>h[i-1]&&h[i]>h[i-2]&&h[i]>h[i+1]&&h[i]>h[i+2]) highs.push({v:h[i], idx:i});
+    if (l[i]<l[i-1]&&l[i]<l[i-2]&&l[i]<l[i+1]&&l[i]<l[i+2]) lows.push({v:l[i], idx:i});
+  }
+  if (highs.length<2 || lows.length<2) return { trend:'range', event:null };
+  const lastHigh = highs[highs.length-1], prevHigh = highs[highs.length-2];
+  const lastLow  = lows[lows.length-1],   prevLow  = lows[lows.length-2];
+  const higherHighs = lastHigh.v > prevHigh.v, higherLows = lastLow.v > prevLow.v;
+  const trend = higherHighs && higherLows ? 'up' : (!higherHighs && !higherLows ? 'down' : 'range');
+  const price = c[n-1];
+  let event = null;
+  if (trend==='up'   && price > lastHigh.v) event = 'BOS_up';
+  if (trend==='down' && price < lastLow.v)  event = 'BOS_down';
+  if (trend==='up'   && price < lastLow.v)  event = 'CHoCH_down';
+  if (trend==='down' && price > lastHigh.v) event = 'CHoCH_up';
+  return { trend, event };
+}
+function premiumDiscountZone(h, l, c, lookback) {
+  lookback = lookback || 30;
+  const n = c.length;
+  const hh = Math.max.apply(null, h.slice(-lookback)), ll = Math.min.apply(null, l.slice(-lookback));
+  if (hh===ll) return { zone:'equilibrium', pct:0.5 };
+  const pct = (c[n-1]-ll)/(hh-ll);
+  return { zone: pct<0.5?'discount':'premium', pct, rangeHigh:hh, rangeLow:ll };
+}
+
 async function analyzeSwing(sym) {
+  // DAY TRADING: interwaly intraday (1H/15min/5min) zamiast starych swingowych
+  // (1d/4h/1h) - zgodnie z tym co liczy worker.js.
   const [kd,k4,k1h,obiData] = await Promise.all([
-    getKlines(sym,'1d',200), getKlines(sym,'4h',100), getKlines(sym,'1h',50),
+    getKlines(sym,'1h',200), getKlines(sym,'15m',100), getKlines(sym,'5m',50),
     OBI.fetch(sym)
   ]);
-  const pk = k => ({c:k.map(x=>+x[4]), h:k.map(x=>+x[2]), l:k.map(x=>+x[3]), v:k.map(x=>+x[5])});
+  const pk = k => ({o:k.map(x=>+x[1]), c:k.map(x=>+x[4]), h:k.map(x=>+x[2]), l:k.map(x=>+x[3]), v:k.map(x=>+x[5])});
   const d=pk(kd), h4=pk(k4), h1=pk(k1h);
   const price = d.c.at(-1);
 
@@ -1530,7 +1598,7 @@ async function analyzeSwing(sym) {
   const rsi4h = rsi(h4.c,14), macd4h=macd(h4.c);
   const rsi1h = rsi(h1.c,14), macd1h=macd(h1.c);
   const confirm1h = (rsi1h<50 && macd1h.hist>0) || rsi1h<40;
-  // Dywergencja RSI — oblicz na ostatnich 40 świecach Daily i 4H
+  // Dywergencja RSI — oblicz na ostatnich 40 świecach 1H i 15min
   const rsiArrD  = rsiArray(d.c.slice(-40), 14);
   const rsiArr4h = rsiArray(h4.c.slice(-30), 14);
   const divD  = rsiDivergence(d.c.slice(-40),  rsiArrD,  38);
@@ -1553,8 +1621,8 @@ async function analyzeSwing(sym) {
   else if (rsi4h<=40) { score+=10; why.push('RSI-4H low'); }
   else if (rsi4h<=50) { score+=5; }
   else if (rsi4h>=70) { score-=10; why.push('RSI-4H wykupiony'); }
-  if      (macdD.hist>0 && macdD.line<0) { score+=20; why.push('MACD cross up Daily'); }
-  else if (macdD.hist>0)                  { score+=12; why.push('MACD histogram+ Daily'); }
+  if      (macdD.hist>0 && macdD.line<0) { score+=20; why.push('MACD cross up 1H'); }
+  else if (macdD.hist>0)                  { score+=12; why.push('MACD histogram+ 1H'); }
   else if (macdD.hist > -atrD*.005)       { score+=4; }
   else                                    { score-=5; }
   if      (bbD.pos<0.08) { score+=18; why.push('Cena przy dolnej BB'); }
@@ -1577,13 +1645,39 @@ async function analyzeSwing(sym) {
   if (divD.bull && div4h.bull) {
     score += 20; why.push('RSI dywergencja bycza D+4H');
   } else if (divD.bull) {
-    score += 14; why.push('RSI dywergencja bycza Daily');
+    score += 14; why.push('RSI dywergencja bycza 1H');
   } else if (div4h.bull) {
     score += 8;  why.push('RSI dywergencja bycza 4H');
   }
-  if (divD.bear)  { score -= 12; why.push('RSI dywergencja niedzwiedzia Daily'); }
+  if (divD.bear)  { score -= 12; why.push('RSI dywergencja niedzwiedzia 1H'); }
   if (div4h.bear) { score -= 7;  why.push('RSI dywergencja niedzwiedzia 4H'); }
   if (trendD===-1 && rsiD>50) { score=Math.min(score,15); why.push('BESSA: brak long'); }
+
+  // ── SMART MONEY CONCEPTS ──────────────────────────────────────────
+  const structure   = detectStructure(d.h, d.l, d.c);
+  const orderBlocks = detectOrderBlocks(h1.o, h1.h, h1.l, h1.c, atr(h1.h, h1.l, h1.c, 14));
+  const fvgs        = detectFVG(h1.h, h1.l, h1.c);
+  const liqSweep    = detectLiquiditySweep(h1.h, h1.l, h1.c);
+  const premDisc     = premiumDiscountZone(d.h, d.l, d.c);
+
+  if (structure.event === 'BOS_up')        { score += 15; why.push('SMC: Break of Structure (bull)'); }
+  else if (structure.event === 'CHoCH_up') { score += 12; why.push('SMC: Change of Character (bull odwrocenie)'); }
+  else if (structure.event === 'BOS_down') { score -= 15; why.push('SMC: Break of Structure (bear)'); }
+  else if (structure.event === 'CHoCH_down'){ score -= 10; why.push('SMC: Change of Character (bear odwrocenie)'); }
+
+  if (liqSweep && liqSweep.type === 'bullish') { score += 14; why.push('SMC: Liquidity sweep (stop hunt) + odbicie'); }
+  if (liqSweep && liqSweep.type === 'bearish') { score -= 10; why.push('SMC: Liquidity sweep gorny'); }
+
+  const nearBullOB = orderBlocks.filter(function(b){return b.type==='bullish';}).some(function(b){ return price >= b.bottom*0.998 && price <= b.top*1.01; });
+  const nearBearOB = orderBlocks.filter(function(b){return b.type==='bearish';}).some(function(b){ return price >= b.bottom*0.99 && price <= b.top*1.002; });
+  if (nearBullOB) { score += 10; why.push('SMC: Cena przy bull Order Block'); }
+  if (nearBearOB) { score -= 8;  why.push('SMC: Cena przy bear Order Block'); }
+
+  const nearBullFVG = fvgs.filter(function(g){return g.type==='bullish';}).some(function(g){ return price >= g.bottom && price <= g.top; });
+  if (nearBullFVG) { score += 6; why.push('SMC: Cena wypelnia bull FVG'); }
+
+  if (premDisc.zone === 'discount') { score += 6; why.push('SMC: Strefa discount (' + (premDisc.pct*100).toFixed(0) + '%)'); }
+  else                                { score -= 4; why.push('SMC: Strefa premium (' + (premDisc.pct*100).toFixed(0) + '%) - mniej atrakcyjne dla longa'); }
 
   // VWAP scoring
   if (price > vwap4h) { score += 8;  why.push('Ponad VWAP'); }
@@ -1681,13 +1775,25 @@ async function analyzeSwing(sym) {
   const ppSL = pairP ? pairP.sl/100 : CFG.sl;
   const ppTP = pairP ? pairP.tp/100 : CFG.tp;
 
+  // ── Poziomy TP/SL/R:R (dynamiczne, ATR) + sygnal SHORT informacyjny ─
+  const levels = calcDynamicLevels(price, atrD);
+  // SHORT jest WYLACZNIE informacyjny - Revolut X nie obsluguje marginu/shortow,
+  // bot nigdy nie wykonuje realnej krotkiej sprzedazy.
+  const shortSignal = finalProb <= (1 - effectiveMinScore/100)
+    && (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || (liqSweep && liqSweep.type === 'bearish'));
+  const shortLevels = shortSignal ? {
+    tp: price * (1 - Math.max(CFG.tp, atrD/price*2.5)),
+    sl: price * (1 + Math.max(CFG.sl, atrD/price*1.5)),
+    rr: (Math.max(CFG.tp, atrD/price*2.5) / Math.max(CFG.sl, atrD/price*1.5)).toFixed(1)
+  } : null;
+
   return {
     sym, price,
     rsiD:+rsiD.toFixed(1), rsi4h:+rsi4h.toFixed(1), rsi1h:+rsi1h.toFixed(1), confirm1h,
     macdHist:macdD.hist, macdLine:macdD.line,
     bbPos:bbD.pos, bbUpper:bbD.upper, bbLower:bbD.lower,
     trendD, ema50, ema200, ema21, atrD,
-    score, finalProb:+finalProb.toFixed(3), buy,
+    score, finalProb:+finalProb.toFixed(3), buy, shortSignal, shortLevels, levels,
     nbPred, gbmProb:+gbmProb.toFixed(3), qlSugg, aiMethod,
     obiRatio:obiData.ratio, obiScore, obiLabel:OBI.label(obiData.ratio),
     patterns:patResult.patterns, patScore,
@@ -1699,7 +1805,7 @@ async function analyzeSwing(sym) {
     mom5:+mom5.toFixed(2), mom10:+mom10.toFixed(2),
     divBull: divD.bull || div4h.bull,
     divBear: divD.bear || div4h.bear,
-    divLabel: divD.bull&&div4h.bull ? 'D+4H' : divD.bull ? 'Daily' : div4h.bull ? '4H' : ''
+    divLabel: divD.bull&&div4h.bull ? '1H+15min' : divD.bull ? '1H' : div4h.bull ? '15min' : ''
   };
 }
 
@@ -1720,7 +1826,7 @@ function aiExplainSignal(sig) {
 
   let html = '<b style="color:'+c+'">'+(sig.buy?'🟢 BUY ':'⚪ WAIT ')+'P(wzrost)='+probPct+'% | Score '+sig.score+'/100</b><br>';
   html += '<span style="color:var(--text3);font-size:8pt">Metoda: '+(sig.aiMethod||'Score')+'</span><br>';
-  html += 'Trend: '+trend+' | RSI(D)='+sig.rsiD+' RSI(4H)='+sig.rsi4h+'<br>';
+  html += 'Trend: '+trend+' | RSI(1H)='+sig.rsiD+' RSI(15min)='+sig.rsi4h+'<br>';
   html += 'MACD '+(sig.macdHist>0?'<span class="up">↑</span>':'<span class="dn">↓</span>')+' BB='+(sig.bbPos*100).toFixed(0)+'% 1H:'+(sig.confirm1h?'✓':'✗');
 
   // NB
@@ -1777,7 +1883,7 @@ function aiExplainPosition(pos, sig) {
   const stateHTML = '<div class="ai-section-title" style="margin-top:14px">Stan pozycji</div><p>Otwarta <b>'+ageH+'h</b>. P/L: <b class="'+(+pnlPct>=0?'up':'dn')+'">'+(+pnlPct>=0?'+':'')+pnlPct+'% ('+(+pnl>=0?'+':'')+'$'+pnl+')</b>. Szczyt: '+fp(pos.highP)+' (+'+highPct+'%).</p><p style="margin-top:5px">Do TP: <b class="up">+'+distTP+'%</b> | Do SL: <b class="dn">-'+distSL+'%</b> | Trailing: <b class="gold">'+trail+'</b></p>';
   let indHTML = '<div class="ai-section-title" style="margin-top:14px">Wskazniki + AI</div>';
   if (sig) {
-    indHTML += buildGauge('RSI Daily', sig.rsiD, 0, 100, sig.rsiD<=35?'var(--green)':sig.rsiD>=65?'var(--red)':'var(--accent)');
+    indHTML += buildGauge('RSI 1H', sig.rsiD, 0, 100, sig.rsiD<=35?'var(--green)':sig.rsiD>=65?'var(--red)':'var(--accent)');
     indHTML += buildGauge('RSI 4H',   sig.rsi4h,0, 100, sig.rsi4h<=35?'var(--green)':sig.rsi4h>=65?'var(--red)':'var(--accent)');
     indHTML += buildGauge('BB pos %', +(sig.bbPos*100).toFixed(0), 0, 100, sig.bbPos<0.3?'var(--green)':sig.bbPos>0.7?'var(--red)':'var(--accent)');
     indHTML += buildGauge('MACD', sig.macdHist>=0?'rosnie':'opada','','', sig.macdHist>=0?'var(--green)':'var(--red)', true);
@@ -2016,8 +2122,8 @@ function corrBlocked(sym) {
 
 // ═══════════════════════════════════════════════════════════════════
 //  IMPROVEMENT 3: DYNAMIC TP/SL BASED ON ATR
-//  TP = entry + 2.5 x ATR(14 Daily)
-//  SL = entry - 1.5 x ATR(14 Daily)
+//  TP = entry + 2.5 x ATR(14, 1H)
+//  SL = entry - 1.5 x ATR(14, 1H)
 //  Trailing = 1.2 x ATR (zamiast stałego %)
 // ═══════════════════════════════════════════════════════════════════
 function calcDynamicLevels(price, atrVal, fee) {
@@ -2461,7 +2567,7 @@ function openAiSignalModal() {
   const sig = lastSignalData;
   gi('ai-modal-title').textContent = 'Ostatni sygnal — '+sig.sym.replace('USDC','')+'/USDC';
   const whyTags = (sig.why||[]).map(function(w){ return '<span class="ai-tag '+(w.includes('bessa')?'ai-tag-r':'ai-tag-g')+'">'+w+'</span>'; }).join('');
-  gi('ai-modal-body').innerHTML = '<div class="ai-explain-block"><div class="ai-section-title">Analiza sygnalu</div><p>'+aiExplainSignal(sig)+'</p><div style="margin-top:10px">'+buildGauge('RSI Daily',sig.rsiD||0,0,100,(sig.rsiD||50)<=35?'var(--green)':(sig.rsiD||50)>=65?'var(--red)':'var(--accent)')+buildGauge('RSI 4H',sig.rsi4h||0,0,100,(sig.rsi4h||50)<=35?'var(--green)':(sig.rsi4h||50)>=65?'var(--red)':'var(--accent)')+buildGauge('BB pos %',+((sig.bbPos||0.5)*100).toFixed(0),0,100,(sig.bbPos||0.5)<0.3?'var(--green)':(sig.bbPos||0.5)>0.7?'var(--red)':'var(--accent)')+'</div><div style="margin-top:8px">'+whyTags+'</div></div>';
+  gi('ai-modal-body').innerHTML = '<div class="ai-explain-block"><div class="ai-section-title">Analiza sygnalu</div><p>'+aiExplainSignal(sig)+'</p><div style="margin-top:10px">'+buildGauge('RSI 1H',sig.rsiD||0,0,100,(sig.rsiD||50)<=35?'var(--green)':(sig.rsiD||50)>=65?'var(--red)':'var(--accent)')+buildGauge('RSI 15min',sig.rsi4h||0,0,100,(sig.rsi4h||50)<=35?'var(--green)':(sig.rsi4h||50)>=65?'var(--red)':'var(--accent)')+buildGauge('BB pos %',+((sig.bbPos||0.5)*100).toFixed(0),0,100,(sig.bbPos||0.5)<0.3?'var(--green)':(sig.bbPos||0.5)>0.7?'var(--red)':'var(--accent)')+'</div><div style="margin-top:8px">'+whyTags+'</div></div>';
   gi('modal-ai').className = 'overlay open';
 }
 
@@ -2523,7 +2629,7 @@ function renderSigList(sigs) {
       +'<div class="pbar-wrap" style="flex:1;height:5px;border-radius:3px"><div class="pbar" style="width:'+s.score+'%;background:'+barGrad+'"></div></div>'
       +'<span style="font-size:11pt;font-weight:900;color:'+c+';font-family:\'JetBrains Mono\',monospace;min-width:28px;text-align:right">'+s.score+'</span></div>'
       +'<div style="display:flex;gap:4px;margin-top:5px;flex-wrap:wrap">'
-      +'<span class="ind-chip" style="color:'+rsiColor+'" title="RSI Daily: '+s.rsiD+(s.rsiD<=35?' — Oversold (bullish)':s.rsiD>=65?' — Overbought (bearish)':' — Neutral')+'">RSI <b>'+s.rsiD+'</b></span>'
+      +'<span class="ind-chip" style="color:'+rsiColor+'" title="RSI 1H: '+s.rsiD+(s.rsiD<=35?' — Oversold (bullish)':s.rsiD>=65?' — Overbought (bearish)':' — Neutral')+'">RSI <b>'+s.rsiD+'</b></span>'
       +'<span class="ind-chip" style="color:'+macdColor+'" title="MACD Histogram: '+(s.macdHist>0?'dodatni — momentum wzrostowe':'ujemny — momentum spadkowe')+'">MACD <b>'+(s.macdHist>0?'↑':'↓')+'</b></span>'
       +'<span class="ind-chip" style="color:'+bbColor+'" title="Bollinger Band pozycja: '+(s.bbPos*100).toFixed(0)+'% (0%=dolna banda, 100%=górna banda)">BB <b>'+(s.bbPos*100).toFixed(0)+'%</b></span>'
       +(s.nbPred&&NB.trained?'<span class="ind-chip" style="color:'+(s.nbPred.prob>0.55?'var(--green)':s.nbPred.prob<0.45?'var(--red)':'var(--gold)')+'" title="Naive Bayes prawdopodobieństwo BUY: '+(s.nbPred.prob*100).toFixed(0)+'%">NB <b>'+(s.nbPred.prob*100).toFixed(0)+'%</b></span>':'')
@@ -3301,7 +3407,7 @@ function calcVWAP(highs, lows, closes, volumes) {
   return vol > 0 ? tpVol / vol : closes[closes.length-1];
 }
 
-// Wykryj lokalne pivoty S/R z ostatnich 50 swiec Daily
+// Wykryj lokalne pivoty S/R z ostatnich 50 swiec 1H
 function calcSRLevels(highs, lows, price) {
   var n = Math.min(50, highs.length);
   var start = highs.length - n;
@@ -3724,7 +3830,7 @@ async function runBacktest() {
 
   try {
     // Używa aktywnej giełdy (Binance lub Bybit) zgodnie z konfiguracją
-    var klines = await getKlines(sym, '1d', Math.min(days, 1000));
+    var klines = await getKlines(sym, '1h', Math.min(days*24, 720)); // day trading: swiece 1H, limit API ~720
     var closes  = klines.map(function(k){ return +k[4]; });
     var highs   = klines.map(function(k){ return +k[2]; });
     var lows    = klines.map(function(k){ return +k[3]; });
@@ -3909,7 +4015,7 @@ async function runMLOptimize() {
   btn.disabled=true; gi('ml-progress').textContent='Pobieranie danych...';
 
   try {
-    var klines = await getKlines(sym, '1d', Math.min(days, 1000));
+    var klines = await getKlines(sym, '1h', Math.min(days*24, 720)); // day trading: swiece 1H, limit API ~720
     var closes  = klines.map(function(k){ return +k[4]; });
     var highs   = klines.map(function(k){ return +k[2]; });
     var lows    = klines.map(function(k){ return +k[3]; });
@@ -3920,10 +4026,10 @@ async function runMLOptimize() {
 
     // Zbuduj dataset: X = [rsiD, macdHist, bbPos, trendD, mom5, mom10], y = 1 jesli cena wrosla o >target% w ciagu 10 dni
     var X = [], y = [];
-    for (var i=35; i<n-10; i++) {
+    for (var i=35; i<n-12; i++) {
       var ind = calcIndicatorsForCandle(closes, highs, lows, i, volumes, opens);
       if (!ind) continue;
-      var future = closes[i+10];
+      var future = closes[i+12]; // 12 swiec 1H (day trading), nie 10 dni
       var label  = (future/closes[i]-1) >= target ? 1 : 0;
       X.push([
         ind.rsiD,
@@ -4027,7 +4133,7 @@ function trainDecisionWeights(X, y) {
 function renderMLWeights(result) {
   var w = result.weights;
   var base = {rsi:30, macd:20, bb:18, trend:12, mom:8, vol:5};
-  var names = ['RSI Daily (14)','MACD histogram','Bollinger Bands','Trend EMA50/200','Momentum 5/10d','Wolumen spike'];
+  var names = ['RSI 1H (14)','MACD histogram','Bollinger Bands','Trend EMA50/200','Momentum 5/10 swiec','Wolumen spike'];
   var keys  = ['rsi','macd','bb','trend','mom','vol'];
   var html  = '';
   keys.forEach(function(k,i) {
@@ -4082,7 +4188,7 @@ async function trainAllAI() {
   var targetPct = parseFloat(gi('ml-target').value)/100;
   gi('ml-progress').textContent = 'Pobieranie danych historycznych...';
   try {
-    var klines = await getKlines(sym, '1d', Math.min(days, 1000));
+    var klines = await getKlines(sym, '1h', Math.min(days*24, 720)); // day trading: swiece 1H, limit API ~720
     var closes  = klines.map(function(k){ return +k[4]; });
     var highs   = klines.map(function(k){ return +k[2]; });
     var lows    = klines.map(function(k){ return +k[3]; });
@@ -4094,10 +4200,10 @@ async function trainAllAI() {
     // Zbuduj syntetyczne "transakcje" do trenowania NB i GBM
     var synTrades = [];
     var X_gbm = [], y_gbm = [];
-    for (var i=35; i<n-10; i++) {
+    for (var i=35; i<n-12; i++) {
       var ind = calcIndicatorsForCandle(closes, highs, lows, i, volumes, opens);
       if (!ind) continue;
-      var futureRet = (closes[i+10]/closes[i])-1;
+      var futureRet = (closes[i+12]/closes[i])-1; // 12 swiec 1H (day trading), nie 10 dni
       var label = futureRet >= targetPct ? 1 : 0;
       var nbF  = NB.discretize({ rsiD:ind.rsiD, macdHist:ind.macdHist, bbPos:ind.bbPos, trendD:ind.trendD, mom5:ind.mom5, confirm1h:ind.macdHist>0 });
       var _atrPctFeat = ind.atrVal > 0 && ind.price > 0 ? Math.min(1, ind.atrVal / ind.price / 0.1) : 0;
@@ -4141,7 +4247,7 @@ function applyMLWeights() {
 // ═══════════════════════════════════════════════════════════════════
 var CHART = {
   sym: null,
-  tf: '1d',
+  tf: '5m',
   klines: [],
   pos: null,   // powiązana pozycja
 
@@ -4160,7 +4266,7 @@ var CHART = {
   load: async function() {
     try {
       gi('chart-status').textContent = 'Pobieranie '+this.tf+'...';
-      var limit = this.tf==='1d'?90 : this.tf==='4h'?120 : 100;
+      var limit = this.tf==='1h'?150 : this.tf==='15m'?120 : 150;
       var raw = await getKlines(this.sym, this.tf, limit);
       this.klines = raw.map(function(k){
         return { t:+k[0], o:+k[1], h:+k[2], l:+k[3], c:+k[4], v:+k[5] };
@@ -4312,8 +4418,8 @@ var CHART = {
     klines.forEach(function(k,i) {
       if (i % step !== 0) return;
       var d = new Date(k.t);
-      var lbl = CHART.tf==='1d'
-        ? (d.getDate()+'.'+(d.getMonth()+1))
+      var lbl = (CHART.tf==='5m'||CHART.tf==='15m')
+        ? (('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2))
         : (d.getDate()+'.'+(d.getMonth()+1)+' '+('0'+d.getHours()).slice(-2)+':00');
       ctx.fillText(lbl, candleX(i)+candleW/2, H-PAD.b+12);
     });

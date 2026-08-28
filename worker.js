@@ -1,5 +1,5 @@
 // SwingAI Bot 24/7 — Cloudflare Worker — REVOLUT X VERSION
-// Multi-TF (Daily+4H+1H), NB+GBM+QL, PATTERNS, Kelly, ATR-TP/SL, CORR, OBI
+// Multi-TF DAY TRADING (1H+15min+5min), NB+GBM+QL, SMC, PATTERNS, Kelly, ATR-TP/SL, CORR, OBI
 // Market data: Kraken public API (Gate.io/Binance/Bybit blokuja CF Workers) | Execution: Revolut X (Ed25519)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -12,7 +12,7 @@
 // mimo wiekszej czestotliwosci. Najbardziej plynne pary, najlepsze dla intraday.
 const PAIRS = ['XBTUSDT','ETHUSDT','SOLUSDT'];
 const FEE   = 0.002;
-const TIMEOUT_MS = 7 * 24 * 3600000; // 7 dni
+const TIMEOUT_MS = 8 * 3600000; // 8h - day trading: pozycja zamykana w ramach jednej sesji, nie tygodniami jak w swingu
 
 const CORR_GROUPS = [
   ['XBTUSDT'],
@@ -328,8 +328,10 @@ async function runBotCycle(env) {
   const drawdown = state.peakBalance > 0 ? (state.peakBalance - currentBalance) / state.peakBalance : 0;
   const drawdownBlocked = (state.drawdownBlock || 0) > Date.now();
   if (drawdown > 0.15 && !drawdownBlocked) {
-    state.drawdownBlock = Date.now() + 24 * 3600000;
-    addLog(state, 'Circuit breaker: -15% drawdown — blokada BUY 24h', 'err');
+    // Day trading: 6h zamiast 24h (swing) - wciaz znaczaca pauza po powaznym
+    // drawdown, ale nie blokujaca praktycznie calego nastepnego dnia handlowego.
+    state.drawdownBlock = Date.now() + 6 * 3600000;
+    addLog(state, 'Circuit breaker: -15% drawdown — blokada BUY 6h', 'err');
   }
 
   // Załaduj modele AI
@@ -627,7 +629,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const d = pk(kd), h4 = pk(k4h), h1 = pk(k1h);
   const price = d.c.at(-1);
 
-  // Wskaźniki Daily
+  // Wskaźniki 1H
   const rsiD   = rsi(d.c, 14);
   const macdD  = macdFull(d.c);
   const bbD    = bband(d.c, 20);
@@ -681,8 +683,8 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   else if (rsi4h <= 50) { score += 5; }
   else if (rsi4h >= 70) { score -= 10; why.push('RSI-4H wykupiony'); }
 
-  if      (macdD.hist > 0 && macdD.line < 0) { score += 20; why.push('MACD cross up Daily'); }
-  else if (macdD.hist > 0)                    { score += 12; why.push('MACD hist+ Daily'); }
+  if      (macdD.hist > 0 && macdD.line < 0) { score += 20; why.push('MACD cross up 1H'); }
+  else if (macdD.hist > 0)                    { score += 12; why.push('MACD hist+ 1H'); }
   else if (macdD.hist > -atrD * 0.005)        { score += 4; }
   else                                         { score -= 5; }
 
@@ -737,9 +739,9 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   else            { score -= 3; }
 
   if      (divD.bull && div4h.bull) { score += 20; why.push('RSI dywergencja bycza D+4H'); }
-  else if (divD.bull)               { score += 14; why.push('RSI dywergencja bycza Daily'); }
+  else if (divD.bull)               { score += 14; why.push('RSI dywergencja bycza 1H'); }
   else if (div4h.bull)              { score += 8;  why.push('RSI dywergencja bycza 4H'); }
-  if (divD.bear)  { score -= 12; why.push('RSI dywergen. niedzwiedzia Daily'); }
+  if (divD.bear)  { score -= 12; why.push('RSI dywergen. niedzwiedzia 1H'); }
   if (div4h.bear) { score -= 7;  why.push('RSI dywergen. niedzwiedzia 4H'); }
 
   if (trendD === -1 && rsiD > 50) { score = Math.min(score, 15); why.push('BESSA: brak long'); }
@@ -873,7 +875,7 @@ async function checkPositions(cfg, state, env, ql) {
       const trail  = pos.highP * (1 - pos.trailDist);
       let reason = null;
 
-      if (Date.now() - pos.entryTs > TIMEOUT_MS)             reason = 'TIMEOUT 7d';
+      if (Date.now() - pos.entryTs > TIMEOUT_MS)             reason = 'TIMEOUT 8h';
       else if (price >= (pos.tp > 0 ? pos.tp : pos.entry * (1 + cfg.tp))) reason = 'TAKE PROFIT';
       else if (price <= (pos.partialClosed ? pos.sl : (pos.sl > 0 ? pos.sl : pos.entry * (1 - cfg.sl)))) reason = 'STOP LOSS';
       else if (price <= trail && pnlPct > 1.5)               reason = 'TRAILING STOP';
@@ -1071,10 +1073,13 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
   if (pnl < 0) {
     state.consLoss = (state.consLoss || 0) + 1;
     if (!state.cooldown || typeof state.cooldown !== 'object') state.cooldown = {};
-    state.cooldown[pos.sym] = Date.now() + 12 * 3600000;
+    // Day trading: 45 min zamiast 12h (swing) - 12h cooldown przy 3-minutowym
+    // cyklu skanu oznaczaloby efektywnie "nie handluj ta para do jutra", co
+    // przeczy idei day tradingu w ramach jednej sesji.
+    state.cooldown[pos.sym] = Date.now() + 45 * 60000;
     if (state.consLoss >= 4) {
-      state.globalBlockUntil = Date.now() + 3 * 3600000;
-      addLog(state, '4 straty z rzedu — blokada 3h', 'err');
+      state.globalBlockUntil = Date.now() + 60 * 60000; // 1h zamiast 3h (swing)
+      addLog(state, '4 straty z rzedu — blokada 1h', 'err');
     }
   } else {
     state.consLoss = 0;
