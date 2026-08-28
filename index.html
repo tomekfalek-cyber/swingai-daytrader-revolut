@@ -2062,6 +2062,14 @@ setInterval(function() {
   }
 }, 30000);
 
+// Niezalezny, szybki polling pozycji (SL/TP/trailing) — dziala co 30s bez wzgledu
+// na cykl skanu (3-5min) i bez wzgledu na to, czy WebSocket akurat zyje. Domykamy
+// tak luke: gdy WS jest zablokowany (np. Zscaler), pilnowanie pozycji nie czeka
+// do nastepnego skanu, tylko sprawdza sie co najwyzej po 30s.
+setInterval(function() {
+  if (running && ST.positions.length) checkPositions().catch(function(e){ log('checkPositions (fast poll) err: '+e.message,'warn'); });
+}, 30000);
+
 function updateWSStatus(active) {
   var el = gi('rb-ws');
   if (!el) return;
