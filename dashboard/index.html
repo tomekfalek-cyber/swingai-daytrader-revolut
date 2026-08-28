@@ -690,12 +690,13 @@ tr:hover td{background:rgba(123,97,255,.04);}
   <div style="background:rgba(123,97,255,.08);border:2px solid rgba(123,97,255,.35);border-radius:6px;padding:10px 12px;margin-bottom:10px;"><div style="font-size:8pt;color:var(--accent);margin-bottom:7px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">&#11044; Revolut X — Ed25519</div><div class="form-row"><label>API Key</label><input id="cfg-revx-key" type="password" placeholder="Revolut X API Key"></div><div style="margin-bottom:8px"><div style="font-size:7.5pt;color:var(--text2);margin-bottom:4px">Private Key PEM — generuj: <code style="background:var(--bg4);padding:1px 5px;border-radius:3px">openssl genpkey -algorithm ed25519</code></div><textarea id="cfg-revx-priv" rows="4" placeholder="-----BEGIN PRIVATE KEY-----" style="width:100%;box-sizing:border-box;background:var(--bg4);color:var(--text);border:1px solid var(--border2);border-radius:5px;padding:6px 8px;font-size:7.5pt;font-family:'JetBrains Mono',monospace;resize:vertical;outline:none;"></textarea></div><div style="font-size:7.5pt;color:var(--text3);line-height:1.5">Public key wgraj w: Revolut X → Settings → API Keys (uprawnienia: Crypto Spot READ + TRADE)</div></div>
   <div class="form-row"><label>Tryb handlu</label><select id="cfg-mode"><option value="paper">&#128221; PAPER — symulacja</option><option value="live">&#128176; LIVE — Revolut X (realne transakcje)</option></select></div>
   <hr style="border-color:var(--border);margin:12px 0;">
-  <div class="form-row"><label>Take Profit %</label><input id="cfg-tp" type="number" value="12" step="0.5" min="3" max="30"> <small class="lbl">Swing: 10-15%</small></div>
-  <div class="form-row"><label>Stop Loss %</label><input id="cfg-sl" type="number" value="5" step="0.5" min="1" max="15"> <small class="lbl">Swing: 4-6%</small></div>
-  <div class="form-row"><label>Trailing Stop %</label><input id="cfg-trail" type="number" value="6" step="0.5" min="1" max="10"> <small class="lbl">Swing: 5-7%</small></div>
+  <div class="form-row"><label>Take Profit %</label><input id="cfg-tp" type="number" value="2" step="0.1" min="0.5" max="8"> <small class="lbl">Day trading: 1.5-3%</small></div>
+  <div class="form-row"><label>Stop Loss %</label><input id="cfg-sl" type="number" value="1" step="0.1" min="0.3" max="4"> <small class="lbl">Day trading: 0.8-1.5%</small></div>
+  <div class="form-row"><label>Trailing Stop %</label><input id="cfg-trail" type="number" value="0.8" step="0.1" min="0.3" max="3"> <small class="lbl">Day trading: 0.6-1.2%</small></div>
   <div class="form-row"><label>Max pozycje</label><input id="cfg-maxpos" type="number" value="4" min="1" max="5"></div>
   <div class="form-row"><label>Rozmiar pozycji $</label><input id="cfg-size" type="number" value="15" min="10" max="10000"></div>
-  <div class="form-row"><label>Skan co (minuty)</label><input id="cfg-interval" type="number" value="5" min="5" max="120"></div>
+  <div class="form-row"><label>Skan co (minuty)</label><input id="cfg-interval" type="number" value="3" min="3" max="30"></div>
+  <div class="form-row"><label>Alerty dźwiękowe</label><input id="cfg-sound" type="checkbox" checked onchange="CFG.soundAlerts=this.checked;saveCfg();"> <small class="lbl">Dźwięk przy wejściu/wyjściu z pozycji</small></div>
   <div class="form-row"><label>Paper saldo startowe $</label><input id="cfg-paper-bal" type="number" value="1000" min="100"></div>
   <div class="form-row"><label>Min Score BUY</label><input id="cfg-minscore" type="number" value="58" min="40" max="90"> <small class="lbl">55-62</small></div>
   <div class="form-row"><label>Kelly — ryzyko %</label><input id="cfg-risk" type="number" value="2" min="0.5" max="5" step="0.5"></div>
@@ -758,11 +759,15 @@ async function fetchWithTimeout(url, ms, opts) {
 let CFG = {
   workerUrl:'', authToken:'swingai-revolut-2024', mode:'paper',
   revxApiKey:'', revxPrivKey:'',
-  tp:0.12, sl:0.05, trail:0.06, maxPos:4, riskPct:2, posSize:15,
-  intervalMin:5, paperBal:1000, minScore:58, fgMin:20,
-  tgToken:'', tgChat:''
+  // Day trading: dużo ciaśniejsze poziomy niż swing (tam 12%/5%/6%) - pozycje
+  // trzymane w ramach jednej sesji, nie tygodni. Ta sama poprawka co w worker.js.
+  tp:0.02, sl:0.01, trail:0.008, maxPos:4, riskPct:2, posSize:15,
+  intervalMin:3, paperBal:1000, minScore:58, fgMin:20,
+  tgToken:'', tgChat:'', soundAlerts:true
 };
-const PAIRS = ['BTC_USDC','ETH_USDC','SOL_USDC','XRP_USDC','DOGE_USDC','ADA_USDC','AVAX_USDC','LINK_USDC'];
+// Day trading: mniej par niz swing (bylo 8), bo czestszy skan (co 3 min) wymaga
+// bezpiecznego budzetu zapytan. Ta sama poprawka co w worker.js.
+const PAIRS = ['BTC_USDC','ETH_USDC','SOL_USDC'];
 const BASE = 'https://api.binance.com';
 const FEE  = 0.002;
 
@@ -2207,6 +2212,55 @@ async function checkPositions() {
   }
 }
 
+// ── SYGNAŁ DŹWIĘKOWY przy wejściu/wyjściu z pozycji ──────────────────
+// Web Audio API - bez zewnętrznych plików dźwiękowych, działa od razu.
+// CFG.soundAlerts (domyślnie true) pozwala to wyłączyć w ustawieniach.
+var _audioCtx = null;
+function _getAudioCtx() {
+  if (!_audioCtx) {
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch(e) { return null; }
+  }
+  return _audioCtx;
+}
+function _beep(freqs, durMs, type) {
+  if (CFG.soundAlerts === false) return;
+  var ctx = _getAudioCtx();
+  if (!ctx) return;
+  try {
+    if (ctx.state === 'suspended') ctx.resume();
+    var t0 = ctx.currentTime;
+    freqs.forEach(function(f, i) {
+      var osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.value = f;
+      var start = t0 + i * (durMs/1000);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.22, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + durMs/1000);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(start); osc.stop(start + durMs/1000 + 0.02);
+    });
+  } catch(e) { /* audio niedostepne (np. autoplay policy) - ciche pominiecie */ }
+}
+// Wejście w pozycję: dwa rosnące tony (przyjemny, wyrazisty sygnał "otwarto")
+function alertPositionOpen(sym, dir) {
+  _beep([660, 880], 130, 'sine');
+  if (window.Notification && Notification.permission === 'granted') {
+    try { new Notification('🟢 Otwarto pozycję (' + (dir||'LONG') + ')', { body: sym, silent: true }); } catch(e){}
+  }
+}
+// Wyjście z pozycji: dwa opadające tony przy zysku (jasny dzwiek), niżej i
+// dłużej przy stracie (ostrzegawczy) - rozroznialne na sluch bez patrzenia na ekran.
+function alertPositionClose(sym, pnlPct) {
+  if (pnlPct >= 0) _beep([880, 660], 140, 'sine');
+  else             _beep([440, 330, 220], 160, 'square');
+  if (window.Notification && Notification.permission === 'granted') {
+    var emoji = pnlPct >= 0 ? '✅' : '🔴';
+    try { new Notification(emoji + ' Zamknięto pozycję (' + pnlPct.toFixed(2) + '%)', { body: sym, silent: true }); } catch(e){}
+  }
+}
+
 async function closeTrade(pos, price, reason) {
   // Guard: nie zamykaj dwa razy tej samej pozycji (WS + polling mogą trafić równocześnie)
   const idx = ST.positions.indexOf(pos);
@@ -2223,8 +2277,10 @@ async function closeTrade(pos, price, reason) {
     ST.dailyPnl += pnl;
     if (pnl < 0) {
       ST.consLoss++;
-      ST.cooldown[pos.sym] = Date.now() + 12*3600000;
-      if (ST.consLoss >= 4) { ST.globalBlockUntil=Date.now()+3*3600000; log('4 straty z rzedu — blokada 3h','err'); toast('Blokada 3h — 4 straty z rzędu','Ochłodź się, sprawdź rynek','warn',8000); }
+      // Day trading: 45 min / 1h zamiast 12h / 3h (swing) - ta sama poprawka co
+      // dzis w worker.js. Stare wartosci efektywnie blokowalyby handel do jutra.
+      ST.cooldown[pos.sym] = Date.now() + 45*60000;
+      if (ST.consLoss >= 4) { ST.globalBlockUntil=Date.now()+60*60000; log('4 straty z rzedu — blokada 1h','err'); toast('Blokada 1h — 4 straty z rzędu','Ochłodź się, sprawdź rynek','warn',8000); }
     } else { ST.consLoss=0; }
     ST.trades.unshift({sym:pos.sym, entry:pos.entry, exit:ep, qty:pos.qty,
       pnl:+pnl.toFixed(4), pnlPct:+pnlPct.toFixed(2), durH, reason, score:pos.score,
@@ -2253,6 +2309,7 @@ async function closeTrade(pos, price, reason) {
     const e2 = pnl>=0 ? '🟢' : '🔴';
     log(e2+' '+pos.sym+' P/L: '+(pnl>=0?'+':'')+'$'+pnl.toFixed(2)+' ('+pnlPct.toFixed(2)+'%) — '+reason, pnl>=0?'ok':'err');
     toast(reason+' '+pos.sym.replace('USDC','/USDC'), (pnl>=0?'+':'')+'$'+pnl.toFixed(2)+' ('+pnlPct.toFixed(2)+'%) | '+durH+'h', pnl>=0?'ok':'err', 6000);
+    alertPositionClose(pos.sym.replace('USDC','/USDC'), pnlPct);
     tgSend(e2+' <b>'+reason+' '+pos.sym.replace('USDC','/USDC')+'</b>\nP/L: '+(pnl>=0?'+':'')+'$'+pnl.toFixed(2)+' ('+pnlPct.toFixed(2)+'%)\nCzas: '+durH+'h');
   } catch(e) {
     // KRYTYCZNE: execSell rzucił wyjątek — przywróć pozycję na listę, żeby nie stracić aktywu
@@ -2343,6 +2400,7 @@ async function openTrade(sig, fg, btcDrop, cachedTotal, cachedUSDC) {
     saveAll();
     log('Otwarto '+sig.sym+' '+((res.qty||0).toFixed(6))+' @ '+fp(execP)+' | R:R='+execLevels.rr,'ok');
     toast('BUY ' + sig.sym.replace('USDC','/USDC'), fp(execP)+' | Kelly $'+posSize.toFixed(2)+' | R:R '+execLevels.rr+':1', 'buy', 5000);
+    alertPositionOpen(sig.sym.replace('USDC','/USDC'), 'LONG');
     lastSignalData = sig;
     gi('btn-ai-last').style.display = '';
     gi('last-signal-box').innerHTML = aiExplainSignal(sig);
@@ -2916,6 +2974,7 @@ function saveSettings() {
   CFG.revxPrivKey=gi('cfg-revx-priv').value.trim();
   CFG.mode=gi('cfg-mode').value;
   CFG.tp=rawTP/100;CFG.sl=rawSL/100;CFG.trail=rawTrail/100;
+  var _cfgSound = gi('cfg-sound'); if (_cfgSound) CFG.soundAlerts = _cfgSound.checked;
   CFG.maxPos=rawMax;CFG.posSize=rawSize;CFG.intervalMin=rawInt;
   const pbVal = parseFloat(gi('cfg-paper-bal').value);
   if(!isFinite(pbVal) || pbVal < 0) { errors.push('Saldo paper: wprowadź poprawną liczbę'); }
