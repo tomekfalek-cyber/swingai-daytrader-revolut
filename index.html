@@ -503,7 +503,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
     </div>
 
     <!-- ZLECENIA REVOLUT X -->
-    <div id="tab-orders" class="tab-pane" style="padding:12px;overflow-y:auto;"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div class="sec-t" style="margin:0">&#128203; Zlecenia Revolut X</div><button onclick="fetchRevolutOrders()" style="padding:3px 10px;font-size:8pt">&#128260; Odswież</button><span style="font-size:8pt;color:var(--text3)" id="orders-last-update">Nigdy nie pobierano</span></div><div style="background:rgba(123,97,255,.06);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:8.5pt;color:var(--gold);">&#9888; Bot zarządza TYLKO kryptowalutami (BTC, ETH, SOL vs USDC) — mniej par niż w wersji swingowej, bo szybszy skan (co 3 min) day tradingu wymaga bezpiecznego budżetu zapytań. Akcje, ETF i surowce <b>NIE są wyświetlane ani dotykane</b>.</div><div class="sec-t" style="margin-bottom:8px">&#128188; Saldo krypto</div><div id="revx-balances" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"><div style="color:var(--text3);font-size:9pt">Odswież aby pobrać salda</div></div><div class="sec-t" style="margin-bottom:8px">&#128204; Aktywne zlecenia krypto</div><div style="overflow-x:auto;margin-bottom:16px;"><table><thead><tr><th>Para</th><th>Strona</th><th>Typ</th><th>Cena</th><th>Ilosc</th><th>Wartosc</th><th>Status</th><th>Czas</th><th>Akcja</th></tr></thead><tbody id="open-orders-body"><tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">Brak danych</td></tr></tbody></table></div><div class="sec-t" style="margin-bottom:8px">&#128220; Historia zleceń krypto (ostatnie 20)</div><div style="overflow-x:auto;"><table><thead><tr><th>Para</th><th>Strona</th><th>Typ</th><th>Cena avg</th><th>Ilosc</th><th>Wartosc</th><th>Status</th><th>Czas</th></tr></thead><tbody id="order-history-body"><tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text3)">Brak danych</td></tr></tbody></table></div></div>
+    <div id="tab-orders" class="tab-pane" style="padding:12px;overflow-y:auto;"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div class="sec-t" style="margin:0">&#128203; Zlecenia Revolut X</div><button onclick="fetchRevolutOrders()" style="padding:3px 10px;font-size:8pt">&#128260; Odswież</button><span style="font-size:8pt;color:var(--text3)" id="orders-last-update">Nigdy nie pobierano</span></div><div style="background:rgba(123,97,255,.06);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:8.5pt;color:var(--gold);">&#9888; Bot zarządza TYLKO kryptowalutami (BTC, ETH, SOL, XRP vs USDC) — mniej par niż w wersji swingowej, bo szybszy skan (co 3 min) day tradingu wymaga bezpiecznego budżetu zapytań. Akcje, ETF i surowce <b>NIE są wyświetlane ani dotykane</b>.</div><div class="sec-t" style="margin-bottom:8px">&#128188; Saldo krypto</div><div id="revx-balances" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"><div style="color:var(--text3);font-size:9pt">Odswież aby pobrać salda</div></div><div class="sec-t" style="margin-bottom:8px">&#128204; Aktywne zlecenia krypto</div><div style="overflow-x:auto;margin-bottom:16px;"><table><thead><tr><th>Para</th><th>Strona</th><th>Typ</th><th>Cena</th><th>Ilosc</th><th>Wartosc</th><th>Status</th><th>Czas</th><th>Akcja</th></tr></thead><tbody id="open-orders-body"><tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">Brak danych</td></tr></tbody></table></div><div class="sec-t" style="margin-bottom:8px">&#128220; Historia zleceń krypto (ostatnie 20)</div><div style="overflow-x:auto;"><table><thead><tr><th>Para</th><th>Strona</th><th>Typ</th><th>Cena avg</th><th>Ilosc</th><th>Wartosc</th><th>Status</th><th>Czas</th></tr></thead><tbody id="order-history-body"><tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text3)">Brak danych</td></tr></tbody></table></div></div>
 
     <!-- BACKTEST -->
     <div id="tab-backtest" class="tab-pane" style="overflow-y:auto;padding:14px;">
@@ -660,7 +660,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
     <div class="r2"><span class="lbl">Metoda decyzyjna</span><span class="val acc" id="ai-method-lbl">Score</span></div>
     <div class="r2"><span class="lbl">TF analizy</span><span class="val acc">1H + 15min + 5min</span></div>
     <div class="r2"><span class="lbl">Formacje swiec</span><span class="val">8 wzorców</span></div>
-    <div class="r2"><span class="lbl">Bessa blokada</span><span class="val dn">poniżej EMA200</span></div>
+    <div class="r2"><span class="lbl">Filtr bessy</span><span class="val dn">long -30pkt / short ulatwiony</span></div>
     <div class="r2"><span class="lbl">Adaptive thresh</span><span class="val" id="ai-adaptive-thresh">--</span></div>
     <div class="r2"><span class="lbl">Q-Learning updates</span><span class="val" id="ai-ql-updates">0</span></div>
     <div class="r2"><span class="lbl">Per-pair skalibrowanych</span><span class="val" id="ai-pp-count">0</span></div>
@@ -767,7 +767,7 @@ let CFG = {
 };
 // Day trading: mniej par niz swing (bylo 8), bo czestszy skan (co 3 min) wymaga
 // bezpiecznego budzetu zapytan. Ta sama poprawka co w worker.js.
-const PAIRS = ['BTC_USDC','ETH_USDC','SOL_USDC'];
+const PAIRS = ['BTC_USDC','ETH_USDC','SOL_USDC','XRP_USDC'];
 const BASE = 'https://api.binance.com';
 const FEE  = 0.002;
 
@@ -783,7 +783,7 @@ let running=false, botTimer=null, nextScanAt=0, lastSigs=[], lastSignalData=null
 function loadAll() {
   try { const s=localStorage.getItem('swingai_revolut_v1'); if(s) ST={...ST,...JSON.parse(s)}; } catch(e){}
   try { const c=localStorage.getItem('swingai_revolut_cfg_v1'); if(c) CFG={...CFG,...JSON.parse(c)}; } catch(e){}
-  if (!CFG.intervalMin || CFG.intervalMin < 5) CFG.intervalMin = 5;
+  if (!CFG.intervalMin || CFG.intervalMin < 3) CFG.intervalMin = 3;
   if (CFG.mode === 'mexc') CFG.mode = 'live';
   const today = new Date().toDateString();
   if (ST.dailyDate !== today) {
@@ -1311,7 +1311,7 @@ async function getKlines(sym,tf,limit){
   const kMap={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
   const kSym=kMap[sym]||(sym.replace('_',''));
   const tfMap={'1d':'1440','4h':'240','1h':'60','15m':'15','5m':'5'};const kTf=tfMap[tf]||'5';
-  const url='https://swingai-revolut.tomek-falek.workers.dev/market?path='+encodeURIComponent('/0/public/OHLC')+'&qs='+encodeURIComponent('pair='+kSym+'&interval='+kTf);
+  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/0/public/OHLC')+'&qs='+encodeURIComponent('pair='+kSym+'&interval='+kTf);
   const r=await fetchWithTimeout(url,15000);const d=await r.json();
   if(d.error&&d.error.length) throw new Error('Kraken OHLC: '+d.error[0]);
   const key=Object.keys(d.result||{}).find(function(k){return k!=='last';});
@@ -1321,7 +1321,7 @@ async function getKlines(sym,tf,limit){
 async function getTicker(sym){
   const kMap={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
   const kSym=kMap[sym]||(sym.replace('_',''));
-  const url='https://swingai-revolut.tomek-falek.workers.dev/market?path='+encodeURIComponent('/0/public/Ticker')+'&qs='+encodeURIComponent('pair='+kSym);
+  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/0/public/Ticker')+'&qs='+encodeURIComponent('pair='+kSym);
   const r=await fetchWithTimeout(url,10000);
   if(!r.ok) throw new Error('getTicker HTTP '+r.status+' '+sym);
   const d=await r.json();
@@ -1602,7 +1602,7 @@ async function analyzeSwing(sym) {
   const regime = detectRegime(d.c, atrD, ema50, ema200);
   const rsi4h = rsi(h4.c,14), macd4h=macd(h4.c);
   const rsi1h = rsi(h1.c,14), macd1h=macd(h1.c);
-  const confirm1h = (rsi1h<50 && macd1h.hist>0) || rsi1h<40;
+  const confirm1h = macd1h.hist>0 && rsi1h<55;
   // Dywergencja RSI — oblicz na ostatnich 40 świecach 1H i 15min
   const rsiArrD  = rsiArray(d.c.slice(-40), 14);
   const rsiArr4h = rsiArray(h4.c.slice(-30), 14);
@@ -1656,7 +1656,8 @@ async function analyzeSwing(sym) {
   }
   if (divD.bear)  { score -= 12; why.push('RSI dywergencja niedzwiedzia 1H'); }
   if (div4h.bear) { score -= 7;  why.push('RSI dywergencja niedzwiedzia 4H'); }
-  if (trendD===-1 && rsiD>50) { score=Math.min(score,15); why.push('BESSA: brak long'); }
+  const bearBias = trendD===-1 && rsiD>50;
+  if (bearBias) { score-=30; why.push('BESSA: long wymaga silnego potwierdzenia'); }
 
   // ── SMART MONEY CONCEPTS ──────────────────────────────────────────
   const structure   = detectStructure(d.h, d.l, d.c);
@@ -1776,16 +1777,12 @@ async function analyzeSwing(sym) {
   const effectiveMinScore = (pairP ? pairP.minScore : ADAPTIVE.getMinScore()) + regimeMinScoreAdj;
   const buy = finalProb >= effectiveMinScore/100;
 
-  // ── Per-pair dynamic TP/SL override ─────────────────────────────
-  const ppSL = pairP ? pairP.sl/100 : CFG.sl;
-  const ppTP = pairP ? pairP.tp/100 : CFG.tp;
-
-  // ── Poziomy TP/SL/R:R (dynamiczne, ATR) + sygnal SHORT informacyjny ─
-  const levels = calcDynamicLevels(price, atrD);
+  // ── Poziomy TP/SL/R:R (dynamiczne, ATR, per-para override) + sygnal SHORT informacyjny ─
+  const levels = calcDynamicLevels(price, atrD, FEE, pairP);
   // SHORT jest WYLACZNIE informacyjny - Revolut X nie obsluguje marginu/shortow,
   // bot nigdy nie wykonuje realnej krotkiej sprzedazy.
   const shortSignal = finalProb <= (1 - effectiveMinScore/100)
-    && (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || (liqSweep && liqSweep.type === 'bearish'));
+    && (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || (liqSweep && liqSweep.type === 'bearish') || bearBias);
   const shortLevels = shortSignal ? {
     tp: price * (1 - Math.max(CFG.tp, atrD/price*2.5)),
     sl: price * (1 + Math.max(CFG.sl, atrD/price*1.5)),
@@ -1804,7 +1801,6 @@ async function analyzeSwing(sym) {
     patterns:patResult.patterns, patScore,
     srLevels, vwap4h, regime,
     why, nbFeatures, gbmFeatures,
-    slPrice:price*(1-ppSL-FEE), tpPrice:price*(1+ppTP-FEE),
     pairParams:pairP,
     volR:+volR.toFixed(2), vol4R:+vol4R.toFixed(2),
     mom5:+mom5.toFixed(2), mom10:+mom10.toFixed(2),
@@ -2084,12 +2080,12 @@ function updateWSStatus(active) {
 // ═══════════════════════════════════════════════════════════════════
 // Grupy korelacji (empiryczne — altcoiny silnie podazaja za BTC)
 var CORR_GROUPS = [
-  ['BTCUSDC'],                                          // BTC osobno
-  ['ETHUSDC','BNBUSDC'],                                // L1 large cap
-  ['SOLUSDC','AVAXUSDC','NEARUSDC','DOTUSDC'],          // L1 alt
-  ['XRPUSDC','ADAUSDC','LTCUSDC'],                      // payments/store-of-value
-  ['DOGEUSDC','SHIBUSDC'],                              // memecoins
-  ['LINKUSDC','UNIUSDC','ATOMUSDC']                     // DeFi
+  ['BTC_USDC'],                                             // BTC osobno
+  ['ETH_USDC','BNB_USDC'],                                  // L1 large cap
+  ['SOL_USDC','AVAX_USDC','NEAR_USDC','DOT_USDC'],          // L1 alt
+  ['XRP_USDC','ADA_USDC','LTC_USDC'],                       // payments/store-of-value
+  ['DOGE_USDC','SHIB_USDC'],                                // memecoins
+  ['LINK_USDC','UNI_USDC','ATOM_USDC']                      // DeFi
 ];
 
 function corrGroupOf(sym) {
@@ -2131,13 +2127,15 @@ function corrBlocked(sym) {
 //  SL = entry - 1.5 x ATR(14, 1H)
 //  Trailing = 1.2 x ATR (zamiast stałego %)
 // ═══════════════════════════════════════════════════════════════════
-function calcDynamicLevels(price, atrVal, fee) {
+function calcDynamicLevels(price, atrVal, fee, pp) {
   fee = fee || FEE;
   if (!price || price <= 0) return { tp: 0, sl: 0, trail: CFG.trail, rr: 0, atrPct: 0 };
-  var atr14 = atrVal || price * CFG.sl; // fallback na % jesli brak ATR
-  if (!atr14 || atr14 <= 0) atr14 = price * CFG.sl;
-  var tpDist = Math.max(price * CFG.tp,  2.5 * atr14);
-  var slDist = Math.max(price * CFG.sl,  1.5 * atr14);
+  var cfgTp = (pp && pp.tp != null) ? pp.tp/100 : CFG.tp;
+  var cfgSl = (pp && pp.sl != null) ? pp.sl/100 : CFG.sl;
+  var atr14 = atrVal || price * cfgSl; // fallback na % jesli brak ATR
+  if (!atr14 || atr14 <= 0) atr14 = price * cfgSl;
+  var tpDist = Math.max(price * cfgTp,  2.5 * atr14);
+  var slDist = Math.max(price * cfgSl,  1.5 * atr14);
   slDist = Math.max(slDist, price * 0.001); // min 0.1% aby uniknąć dzielenia przez 0
   // Upewnij sie ze R:R >= 1.5:1
   if (tpDist / slDist < 1.5) tpDist = slDist * 1.8;
@@ -2334,7 +2332,7 @@ async function openTrade(sig, fg, btcDrop, cachedTotal, cachedUSDC) {
     sig = Object.assign({}, sig, { score: Math.max(0, sig.score - 10), finalProb: Math.max(0, sig.finalProb - 0.10) });
     if (sig.finalProb < (PAIR_PARAMS.get(sig.sym) ? PAIR_PARAMS.get(sig.sym).minScore : ADAPTIVE.getMinScore())/100) return;
   }
-  if (btcDrop && sig.sym !== 'BTCUSDC') return;
+  if (btcDrop && sig.sym !== 'BTC_USDC') return;
   // Correlation guard
   if (corrBlocked(sig.sym)) return;
   // Użyj przekazanego cache balansu (unikamy N wywołań API przy N sygnałach BUY w jednym cyklu)
@@ -2368,8 +2366,9 @@ async function openTrade(sig, fg, btcDrop, cachedTotal, cachedUSDC) {
   const _minSize = _micro ? 1 : 10;
   if (posSize < _minSize) { log('Za malo USDC: $'+usdc.toFixed(2),'warn'); return; }
 
-  // Dynamic TP/SL based on ATR
-  const levels  = calcDynamicLevels(sig.price, sig.atrD, FEE);
+  // Dynamic TP/SL based on ATR (per-para override, jesli skalibrowany)
+  const pairP   = PAIR_PARAMS.get(sig.sym);
+  const levels  = calcDynamicLevels(sig.price, sig.atrD, FEE, pairP);
   const tpPrice = levels.tp;
   const slPrice = levels.sl;
   const trailDist = levels.trail;
@@ -2384,7 +2383,7 @@ async function openTrade(sig, fg, btcDrop, cachedTotal, cachedUSDC) {
     }
     const execP = res.price || sig.price;
     // Przelicz poziomy na cenie wykonania
-    const execLevels = calcDynamicLevels(execP, sig.atrD, FEE);
+    const execLevels = calcDynamicLevels(execP, sig.atrD, FEE, pairP);
     ST.positions.push({sym:sig.sym, entry:execP, qty:res.qty,
       cp:execP, sl:execLevels.sl, tp:execLevels.tp,
       trailDist:execLevels.trail,
@@ -2443,9 +2442,9 @@ async function botCycle() {
   if (ST.peakBalance > 0) {
     var _drawdown = (ST.peakBalance - _curBal) / ST.peakBalance;
     if (_drawdown > 0.15 && !(ST.drawdownBlock > Date.now())) {
-      ST.drawdownBlock = Date.now() + 24 * 3600000;
-      log('Circuit breaker: -15% drawdown - blokada BUY 24h', 'err');
-      toast('Circuit breaker aktywny', 'Drawdown >15% - blokada BUY przez 24h', 'warn', 8000);
+      ST.drawdownBlock = Date.now() + 6 * 3600000;
+      log('Circuit breaker: -15% drawdown - blokada BUY 6h', 'err');
+      toast('Circuit breaker aktywny', 'Drawdown >15% - blokada BUY przez 6h', 'warn', 8000);
     }
   }
 
@@ -2683,6 +2682,15 @@ function renderSigList(sigs) {
       +'<div style="display:flex;justify-content:space-between;margin-top:1px">'
       +'<span class="sig-price" style="font-family:\'JetBrains Mono\',monospace">'+fp(s.price)+'</span>'
       +'<span class="'+tC+'" style="font-size:8pt">'+tT+' RSI:<b style="font-family:\'JetBrains Mono\',monospace">'+s.rsiD+'</b></span></div>'
+      +((s.buy && s.levels) ? ('<div style="display:flex;justify-content:space-between;margin-top:2px;font-size:7.5pt" title="Poziomy dla LONG (ATR-dynamiczne, per-para)">'
+        +'<span style="color:var(--green)">TP <b style="font-family:\'JetBrains Mono\',monospace">'+fp(s.levels.tp)+'</b></span>'
+        +'<span style="color:var(--red)">SL <b style="font-family:\'JetBrains Mono\',monospace">'+fp(s.levels.sl)+'</b></span>'
+        +'<span style="color:var(--text3)">R:R 1:'+s.levels.rr+'</span></div>')
+      : (s.shortSignal && s.shortLevels) ? ('<div style="display:flex;justify-content:space-between;margin-top:2px;font-size:7.5pt" title="Poziomy dla SHORT — informacyjnie, Revolut X nie wykonuje realnych shortow">'
+        +'<span style="color:#ffb347">TP <b style="font-family:\'JetBrains Mono\',monospace">'+fp(s.shortLevels.tp)+'</b></span>'
+        +'<span style="color:var(--red)">SL <b style="font-family:\'JetBrains Mono\',monospace">'+fp(s.shortLevels.sl)+'</b></span>'
+        +'<span style="color:var(--text3)">R:R 1:'+s.shortLevels.rr+' (info)</span></div>')
+      : '')
       +'<div style="display:flex;align-items:center;gap:6px;margin-top:5px">'
       +'<div class="pbar-wrap" style="flex:1;height:5px;border-radius:3px"><div class="pbar" style="width:'+s.score+'%;background:'+barGrad+'"></div></div>'
       +'<span style="font-size:11pt;font-weight:900;color:'+c+';font-family:\'JetBrains Mono\',monospace;min-width:28px;text-align:right">'+s.score+'</span></div>'
@@ -2866,6 +2874,13 @@ function renderMarketTab(sigs) {
     return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:12px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="font-size:11pt">'+s.sym.replace('USDC','')+'</b><span class="'+tC+'" style="font-size:8.5pt">'+tT+'</span></div>'
       +'<div style="font-size:11pt;font-weight:900;margin-bottom:5px">'+fp(s.price)+'</div>'
+      +((s.buy && s.levels) ? ('<div style="display:flex;gap:8px;margin-bottom:5px;font-size:8pt">'
+        +'<span style="color:var(--green)">TP '+fp(s.levels.tp)+'</span>'
+        +'<span style="color:var(--red)">SL '+fp(s.levels.sl)+'</span></div>')
+      : (s.shortSignal && s.shortLevels) ? ('<div style="display:flex;gap:8px;margin-bottom:5px;font-size:8pt" title="informacyjnie — brak realnego shorta na Revolut X">'
+        +'<span style="color:#ffb347">TP '+fp(s.shortLevels.tp)+'</span>'
+        +'<span style="color:var(--red)">SL '+fp(s.shortLevels.sl)+'</span></div>')
+      : '')
       +'<div style="display:flex;gap:5px;margin-bottom:5px;font-size:8pt;flex-wrap:wrap">'
       +'<span style="color:'+(s.rsiD<=35?'var(--green)':s.rsiD>=65?'var(--red)':'var(--text2)')+'">RSI-D:'+s.rsiD+'</span>'
       +'<span style="color:'+(s.rsi4h<=35?'var(--green)':s.rsi4h>=65?'var(--red)':'var(--text2)')+'">RSI-4H:'+s.rsi4h+'</span>'
@@ -2903,12 +2918,12 @@ function openSettings() {
   gi('cfg-revx-key').value=CFG.revxApiKey||'';
   gi('cfg-revx-priv').value=CFG.revxPrivKey||'';
   gi('cfg-mode').value=CFG.mode||'paper';
-  gi('cfg-tp').value=((CFG.tp||0.12)*100).toFixed(1);
-  gi('cfg-sl').value=((CFG.sl||0.05)*100).toFixed(1);
-  gi('cfg-trail').value=((CFG.trail||0.06)*100).toFixed(1);
+  gi('cfg-tp').value=((CFG.tp||0.02)*100).toFixed(1);
+  gi('cfg-sl').value=((CFG.sl||0.01)*100).toFixed(1);
+  gi('cfg-trail').value=((CFG.trail||0.008)*100).toFixed(1);
   gi('cfg-maxpos').value=CFG.maxPos||4;
   gi('cfg-size').value=CFG.posSize||15;
-  gi('cfg-interval').value=CFG.intervalMin||5;
+  gi('cfg-interval').value=CFG.intervalMin||3;
   gi('cfg-paper-bal').value=CFG.paperBal||1000;
   gi('cfg-minscore').value=CFG.minScore||58;
   gi('cfg-risk').value=CFG.riskPct||2;
@@ -3001,6 +3016,8 @@ function saveSettings() {
       _params.set('score', CFG.minScore.toString());
       _params.set('maxp', CFG.maxPos.toString());
       _params.set('size', CFG.posSize.toString());
+      _params.set('riskPct', CFG.riskPct.toString());
+      _params.set('fgMin', CFG.fgMin.toString());
       fetch(CFG.workerUrl + '/save-config?' + _params.toString()).catch(function(){});
     }
   } catch(e) { console.warn('sync do workera nieudany:', e); }
@@ -3072,7 +3089,7 @@ var OBI = {
         // Kraken orderbook
         var kMap2={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
         var kSym2=kMap2[sym]||(sym.replace('_',''));
-        var d=await fetchWithTimeout('https://swingai-revolut.tomek-falek.workers.dev/market?path='+encodeURIComponent('/0/public/Depth')+'&qs='+encodeURIComponent('pair='+kSym2+'&count=20'),10000);
+        var d=await fetchWithTimeout((CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/0/public/Depth')+'&qs='+encodeURIComponent('pair='+kSym2+'&count=20'),10000);
         var dj = await d.json();
         var key2=Object.keys(dj.result||{})[0];var book=key2?dj.result[key2]:{bids:[],asks:[]};
         var bidVol = (book.bids||[]).reduce(function(s,b){ var v=(parseFloat(b[0])||0)*(parseFloat(b[1])||0); return s+(isFinite(v)?v:0); }, 0);
@@ -3134,10 +3151,10 @@ var PAIR_PARAMS = {
     var sortedWins = wins.map(function(t){ return t.pnlPct; }).sort(function(a,b){ return a-b; });
     var medianWin  = sortedWins[Math.floor(sortedWins.length*0.5)] || avgWinPct;
 
-    // TP: mediana wygranych, min 3%, max 20%
-    var optTP = Math.max(3, Math.min(20, medianWin * 0.9));
-    // SL: srednia strat * 0.8 (ucinaj straty szybciej niz srednia), min 1.5%, max 10%
-    var optSL = Math.max(1.5, Math.min(10, avgLossPct * 0.8));
+    // TP: mediana wygranych, min 1%, max 6% (skala day trading, baza CFG.tp=2%)
+    var optTP = Math.max(1, Math.min(6, medianWin * 0.9));
+    // SL: srednia strat * 0.8 (ucinaj straty szybciej niz srednia), min 0.5%, max 3%
+    var optSL = Math.max(0.5, Math.min(3, avgLossPct * 0.8));
     // MinScore: jezeli win rate < 45% — zaostrzaj, jezeli > 65% — luzuj
     var optScore = CFG.minScore;
     if (winRate < 0.45) optScore = Math.min(90, CFG.minScore + Math.round((0.45-winRate)*100));
@@ -3184,9 +3201,10 @@ var PAIR_PARAMS = {
 //  State = (rsiD_bin, macd_bin, trend, obi_bin)
 // ── ENSEMBLE_W: dynamiczne wagi dla 5 modeli ───────────────────────
 //  Co 20 zamknietych transakcji wagi sa przeliczane wg celnosci modelu.
-//  Startowe wagi = oryginalne hardkodowane 45/20/20/10/5.
+//  Startowe wagi = takie same jak w worker.js (score:1, nb:0.8, gbm:0.9, obi:0.3, ql:0.5),
+//  zeby klient i backend liczyly ten sam finalProb dla identycznych danych.
 var ENSEMBLE_W = {
-  score: 0.45, nb: 0.20, gbm: 0.20, obi: 0.10, ql: 0.05,
+  score: 1, nb: 0.8, gbm: 0.9, obi: 0.3, ql: 0.5,
   // Historia predykcji kazdego modelu: { correct, total }
   _hist: { score:{c:0,n:0}, nb:{c:0,n:0}, gbm:{c:0,n:0}, obi:{c:0,n:0}, ql:{c:0,n:0} },
   _WINDOW: 20,   // okno ostatnich transakcji do oceny modelu
@@ -4979,7 +4997,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Auto-scan sygnałów przy starcie (bez uruchamiania pełnego bota)
   setTimeout(function() {
     log('Auto-analiza sygnałów AI przy starcie...', 'info');
-    var INIT_PAIRS = ['BTC_USDC', 'ETH_USDC', 'SOL_USDC'];
+    var INIT_PAIRS = ['BTC_USDC', 'ETH_USDC', 'SOL_USDC', 'XRP_USDC'];
     (async function(){
       for (var ip=0; ip<INIT_PAIRS.length; ip++) {
         try {
