@@ -2490,6 +2490,8 @@ async function botCycle() {
   renderHistory();
   renderStats();
   renderCooldowns();
+  // Odswiez wykres pary aktualnie otwartej w zakladce "Wykres" (TP/SL/S-R) po kazdym skanie
+  if (INLINE_CHART.klines.length) INLINE_CHART.showSignal();
 
   gi('last-scan').textContent = new Date().toLocaleTimeString('pl-PL');
   // Aktualizuj panele AI
@@ -4845,6 +4847,10 @@ var INLINE_CHART = {
     if (this.sig) {
       if (this.sig.buy && this.sig.levels) { allH.push(this.sig.levels.tp); allL.push(this.sig.levels.sl); }
       if (this.sig.shortSignal && this.sig.shortLevels) { allH.push(this.sig.shortLevels.sl); allL.push(this.sig.shortLevels.tp); }
+      if (this.sig.srLevels) {
+        (this.sig.srLevels.above||[]).forEach(function(lvl){ allH.push(lvl); });
+        (this.sig.srLevels.below||[]).forEach(function(lvl){ allL.push(lvl); });
+      }
     }
     var priceMax = Math.max.apply(null,allH), priceMin = Math.min.apply(null,allL);
     var priceRange = priceMax - priceMin || 1;
@@ -4893,6 +4899,21 @@ var INLINE_CHART = {
       drawLevelLine(sig.shortLevels.sl, 'rgba(255,61,90,0.85)', 'SL (short, info)');
       drawLevelLine(sig.price,          'rgba(255,255,255,0.55)', 'POZIOM (SHORT — INFO, nie wykonywany)', [2,2]);
       rrText = { text: 'R:R 1:' + sig.shortLevels.rr + ' (informacyjnie)', color: 'rgba(255,179,71,0.95)', dir: 'SHORT (info)' };
+    }
+
+    // ── WSPARCIE / OPÓR (S/R) — pogrubione linie, aktualne po kazdym skanie ──
+    function drawSRLine(price, color, label) {
+      var y = yP(price);
+      ctx.setLineDash([]);
+      ctx.strokeStyle = color; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W-PAD.r, y); ctx.stroke();
+      ctx.fillStyle = color; ctx.font = 'bold 8.5px JetBrains Mono,monospace'; ctx.textAlign = 'right';
+      var pLbl = price>=1?price.toFixed(2):price.toFixed(5);
+      ctx.fillText(label + ' ' + pLbl, W-PAD.r-4, y - 4);
+    }
+    if (sig && sig.srLevels) {
+      (sig.srLevels.above||[]).forEach(function(lvl){ drawSRLine(lvl, 'rgba(179,136,255,0.9)', 'OPÓR'); });
+      (sig.srLevels.below||[]).forEach(function(lvl){ drawSRLine(lvl, 'rgba(80,200,255,0.9)', 'WSPARCIE'); });
     }
 
     // Grid
