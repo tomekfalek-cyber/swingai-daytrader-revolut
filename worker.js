@@ -346,24 +346,62 @@ export default {
     }
 
 
-    // Proxy Revolut X — publiczny endpoint dla wykresow dashboard (CORS: revx.revolut.com
-    // nie wysyla Access-Control-Allow-Origin, wiec przegladarka nie moze wywolac go
-    // bezposrednio z index.html na github.io - musi isc przez ten proxy Workera).
+    // Proxy dla wykresow dashboard — dane z Bybit v5 (Revolut X /public/candles i
+    // /public/order-book wymagaja auth mimo nazwy "public", zweryfikowane 2026-09-02:
+    // HTTP 401 "Unauthenticated access"; dziala bez klucza tylko /public/tickers).
+    // Frontend (index.html) nadal wysyla "stare", Revolut-podobne sciezki/parametry
+    // (np. path=/1.0/public/candles/BTC/USDC) — ZERO zmian w index.html; ten proxy
+    // tlumaczy je na realne zapytania Bybit i przeksztalca odpowiedz z powrotem do
+    // ksztaltu JSON, ktorego juz oczekuje istniejacy kod klienta (getKlines/getTicker/
+    // OBI.fetch w index.html) - stad brak potrzeby dotykania frontendu.
     if (url.pathname === '/market') {
       const path = url.searchParams.get('path') || '';
       const qs   = url.searchParams.get('qs')   || '';
       if (path.includes('..') || qs.includes('..')) {
         return new Response('Forbidden', { status: 403, headers: corsHeaders() });
       }
-      const allowedPrefixes = ['/1.0/public/candles/', '/1.0/public/tickers', '/2.0/public/order-book/'];
-      if (!allowedPrefixes.some(p => path.startsWith(p))) {
-        return new Response('Forbidden', { status: 403, headers: corsHeaders() });
-      }
+      const qsParams = new URLSearchParams(qs);
       try {
-        const revxUrl = REVX_PUBLIC_BASE + path + (qs ? '?' + qs : '');
-        const r = await fetchWithTimeout(revxUrl, 8000, { headers: { 'User-Agent': 'SwingAI/1.0' } });
-        const body = await r.text();
-        return new Response(body, { status: r.status, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+        if (path.startsWith('/1.0/public/candles/')) {
+          const symPart = path.slice('/1.0/public/candles/'.length);
+          const base = (symPart.split('/')[0] || 'BTC').toUpperCase();
+          const bybSym = base + 'USDT';
+          const ivMin = qsParams.get('interval') || '5';
+          const bybUrl = `${BYBIT_BASE}/v5/market/kline?category=spot&symbol=${bybSym}&interval=${ivMin}&limit=200`;
+          const r = await fetchWithTimeout(bybUrl, 8000, { headers: { 'User-Agent': 'SwingAI/1.0' } });
+          const d = await r.json();
+          const list = (d.result && d.result.list) || [];
+          const rows = list.slice().reverse().map(k => ({ start: +k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] }));
+          return new Response(JSON.stringify({ data: rows }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+        }
+        if (path.startsWith('/1.0/public/tickers')) {
+          const symParam = qsParams.get('symbols') || 'BTC/USDC';
+          const base = (symParam.split('/')[0] || 'BTC').toUpperCase();
+          const bybSym = base + 'USDT';
+          const bybUrl = `${BYBIT_BASE}/v5/market/tickers?category=spot&symbol=${bybSym}`;
+          const r = await fetchWithTimeout(bybUrl, 8000, { headers: { 'User-Agent': 'SwingAI/1.0' } });
+          const d = await r.json();
+          const t = (d.result && d.result.list && d.result.list[0]) || null;
+          if (!t) return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+          const last = +t.lastPrice;
+          const chgPct = +(t.price24hPcnt || 0) * 100;
+          const priceChange24h = last - (last / (1 + chgPct / 100));
+          return new Response(JSON.stringify({ data: [{ symbol: symParam, bid: t.bid1Price, ask: t.ask1Price, mid: last, last_price: last, low_24h: t.lowPrice24h, high_24h: t.highPrice24h, price_change_24h: priceChange24h, volume_24h: t.volume24h }] }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+        }
+        if (path.startsWith('/2.0/public/order-book/')) {
+          const symPart = path.slice('/2.0/public/order-book/'.length);
+          const base = (symPart.split('/')[0] || 'BTC').toUpperCase();
+          const bybSym = base + 'USDT';
+          const limit = qsParams.get('limit') || '20';
+          const bybUrl = `${BYBIT_BASE}/v5/market/orderbook?category=spot&symbol=${bybSym}&limit=${limit}`;
+          const r = await fetchWithTimeout(bybUrl, 8000, { headers: { 'User-Agent': 'SwingAI/1.0' } });
+          const d = await r.json();
+          const bk = d.result || {};
+          const bids = (bk.b || []).map(x => ({ price: x[0], quantity: x[1] }));
+          const asks = (bk.a || []).map(x => ({ price: x[0], quantity: x[1] }));
+          return new Response(JSON.stringify({ data: { bids, asks } }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+        }
+        return new Response('Forbidden', { status: 403, headers: corsHeaders() });
       } catch(e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
       }
@@ -1254,15 +1292,12 @@ function isDeadHour() {
 
 async function btcDropGuard() {
   try {
-    const r = await fetchWithTimeout(`${REVX_PUBLIC_BASE}/1.0/public/tickers?symbols=${encodeURIComponent('BTC/USDC')}`);
+    const r = await fetchWithTimeout(`${BYBIT_BASE}/v5/market/tickers?category=spot&symbol=BTCUSDT`);
     const d = await r.json();
-    const t = (d.data || []).find(x => x.symbol === 'BTC/USDC');
+    const t = (d.result && d.result.list && d.result.list[0]) || null;
     if (!t) return false;
-    const last = +t.last_price;
-    const chg24h = +t.price_change_24h; // Revolut X zwraca zmiane absolutna, nie %
-    const open24h = last - chg24h;
-    if (!open24h) return false;
-    return (last - open24h) / open24h * 100 < -5;
+    const pct = +(t.price24hPcnt || 0) * 100;
+    return pct < -5;
   } catch(e) { return false; }
 }
 
@@ -1710,16 +1745,20 @@ function atr(h, l, c, p=14) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// MARKET DATA — REVOLUT X (public, no auth) — https://revx.revolut.com/api
+// MARKET DATA — BYBIT V5 (public, no auth) — https://api.bybit.com
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Zweryfikowane empirycznie 2026-09-02: /1.0/public/candles/{symbol}?interval=<min>
-// (interwal w MINUTACH - dokladnie te same wartosci '60'/'15'/'5' co juz uzywa ten
-// kod, zero mapowania), /1.0/public/tickers?symbols=<symbol>, /2.0/public/order-book/
-// {symbol}?limit=<n>. Symbol w formacie "BTC/USDC" (ze slashem) - to jest DOKLADNIE
-// to co zwraca juz istniejaca revxInstrument(sym), wiec dane i egzekucja uzywaja
-// tego samego mapowania symboli (zero rozjazdu). Candles wracaja juz w kolejnosci
-// najstarsza->najnowsza (bez potrzeby .reverse()).
-const REVX_PUBLIC_BASE = 'https://revx.revolut.com/api';
+// Revolut X /public/candles i /public/order-book okazaly sie mimo nazwy "public"
+// WYMAGAC autoryzacji (HTTP 401 "Unauthenticated access", zweryfikowane empirycznie
+// 2026-09-02) - dziala bez klucza jedynie /public/tickers. Zamiast blokowac cala
+// analize (RSI/MACD/ATR licza sie ze swiec) do czasu uzyskania klucza API Revolut X,
+// dane rynkowe ida z Bybit v5 (bez auth, sprawdzone ze dziala z Cloudflare Workers -
+// juz uzywane w tej rodzinie botow, patrz komentarze w swingai-bot/MEXC). Symbol
+// danych (Bybit BTCUSDT) != symbol egzekucji (Revolut X BTC/USDC) - to jest OK,
+// identyczny wzorzec co w bocie MEXC (dane Kraken XBTUSDT, egzekucja MEXC BTCUSDC):
+// USDT i USDC sa praktycznie 1:1, wiec ruch ceny (do czego slyzy analiza) jest
+// wiarygodny mimo innego zrodla niz miejsce faktycznego zlecenia.
+const BYBIT_BASE = 'https://api.bybit.com';
+function bybitSymbol(sym) { return sym.replace('XBT', 'BTC'); }
 
 function fetchWithTimeout(url, ms, opts) {
   ms = ms || 8000;
@@ -1729,52 +1768,53 @@ function fetchWithTimeout(url, ms, opts) {
   return fetch(url, options).finally(() => clearTimeout(tid));
 }
 
-// Revolut X public API zwraca 429 pod obciazeniem (zweryfikowane empirycznie -
-// pierwszy test 4-parowego cyklu zlapal 429 na 3 z 4 par). Retry z rosnacym
-// backoffem (500/1500/3000ms), analogicznie do retry na Krakenie w bocie MEXC.
-async function fetchRevxPublicWithRetry(url, tries) {
+// Bybit zwraca retCode!=0 (np. 10006/10018 = rate limit) w JSON z HTTP 200, nie
+// przez HTTP status - retry musi sprawdzac retCode, analogicznie do sprawdzania
+// d.error na Krakenie w bocie MEXC.
+async function fetchBybitWithRetry(url, tries) {
   tries = tries || 3;
   const delays = [500, 1500, 3000];
   let lastErr;
   for (let attempt = 0; attempt < tries; attempt++) {
     try {
       const r = await fetchWithTimeout(url, 8000);
-      if (r.status === 429) { lastErr = new Error('Revolut X: HTTP 429 (rate limit)'); }
-      else if (!r.ok) { lastErr = new Error('Revolut X: HTTP ' + r.status); }
-      else { return await r.json(); }
+      const d = await r.json();
+      if (d.retCode === 10006 || d.retCode === 10018) { lastErr = new Error('Bybit: rate limit (' + d.retCode + ')'); }
+      else if (d.retCode !== 0) { lastErr = new Error('Bybit: ' + d.retMsg + ' (' + d.retCode + ')'); }
+      else { return d; }
     } catch(e) { lastErr = e; }
     if (attempt < tries - 1) await sleep(delays[attempt] || 3000);
   }
-  throw lastErr || new Error('Revolut X: nieznany blad');
+  throw lastErr || new Error('Bybit: nieznany blad');
 }
 
 async function getKlines(sym, interval, limit) {
-  const instr = revxInstrument(sym);
-  const d = await fetchRevxPublicWithRetry(
-    `${REVX_PUBLIC_BASE}/1.0/public/candles/${encodeURIComponent(instr)}?interval=${interval}`
+  const bsym = bybitSymbol(sym);
+  const d = await fetchBybitWithRetry(
+    `${BYBIT_BASE}/v5/market/kline?category=spot&symbol=${bsym}&interval=${interval}&limit=${limit}`
   );
-  const list = d.data;
-  if (!Array.isArray(list) || list.length === 0) throw new Error('getKlines: pusta lista ' + sym);
-  const sliced = list.slice(-limit);
-  return sliced.map(k => [+k.start, +k.open, +k.high, +k.low, +k.close, +k.volume]);
+  const list = (d.result && d.result.list) || [];
+  if (!list.length) throw new Error('getKlines: pusta lista ' + sym);
+  // Bybit zwraca najnowsza swiece pierwsza - odwroc do konwencji najstarsza->najnowsza
+  return list.slice().reverse().map(k => [+k[0], +k[1], +k[2], +k[3], +k[4], +k[5]]);
 }
 
 async function getLastPrice(sym) {
-  const instr = revxInstrument(sym);
-  const d = await fetchRevxPublicWithRetry(`${REVX_PUBLIC_BASE}/1.0/public/tickers?symbols=${encodeURIComponent(instr)}`);
-  const t = (d.data || []).find(x => x.symbol === instr);
+  const bsym = bybitSymbol(sym);
+  const d = await fetchBybitWithRetry(`${BYBIT_BASE}/v5/market/tickers?category=spot&symbol=${bsym}`);
+  const t = (d.result && d.result.list && d.result.list[0]) || null;
   if (!t) throw new Error('getPrice: brak danych ' + sym);
-  return +t.last_price;
+  return +t.lastPrice;
 }
 
 async function getOrderbook(sym) {
   try {
-    const instr = revxInstrument(sym);
-    const d = await fetchRevxPublicWithRetry(`${REVX_PUBLIC_BASE}/2.0/public/order-book/${encodeURIComponent(instr)}?limit=20`, 2);
-    const book = d.data;
-    if (!book || !book.bids || !book.asks) return { ratio: 0.5 };
-    const bids = book.bids.reduce((s, x) => s + +x.quantity, 0);
-    const asks = book.asks.reduce((s, x) => s + +x.quantity, 0);
+    const bsym = bybitSymbol(sym);
+    const d = await fetchBybitWithRetry(`${BYBIT_BASE}/v5/market/orderbook?category=spot&symbol=${bsym}&limit=20`, 2);
+    const book = d.result || {};
+    const bidsArr = book.b || [], asksArr = book.a || [];
+    const bids = bidsArr.reduce((s, x) => s + +x[1], 0);
+    const asks = asksArr.reduce((s, x) => s + +x[1], 0);
     const total = bids + asks;
     return { ratio: total > 0 ? bids / total : 0.5, bids, asks };
   } catch(e) { return { ratio: 0.5 }; }
@@ -2074,6 +2114,7 @@ function redirectHTML(msg) {
 <style>body{background:#020810;color:#00e5a0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-size:1.4em;flex-direction:column;gap:12px;}</style>
 </head><body><div>${msg}</div><div style="color:#334d74;font-size:0.5em">Przekierowanie za 2 sekundy...</div></body></html>`;
 }
+
 
 
 
