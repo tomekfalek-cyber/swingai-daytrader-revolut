@@ -332,6 +332,100 @@ tr:hover td{background:rgba(123,97,255,.04);}
 </head>
 <body>
 
+<!-- PIN GATE OVERLAY — index.html jest plikiem statycznym na GitHub Pages (Worker
+     go nie serwuje/nie przechwytuje), wiec ochrona PIN-em musi zyc tutaj, w JS.
+     Domyslnie widoczny (blokuje caly widok); chowany przez pinGateCheckSession()
+     po potwierdzeniu sesji (cookie ustawiane przez Worker po /verify-pin). -->
+<div id="pin-overlay" style="position:fixed;inset:0;background:#020810;z-index:99999;display:flex;align-items:center;justify-content:center;">
+  <div style="background:#0b1526;padding:32px 28px;border-radius:14px;box-shadow:0 0 40px rgba(0,0,0,.5);text-align:center;width:280px">
+    <h1 style="font-size:1.1em;margin:0 0 18px;color:#00e5a0">SwingAI Bot — Revolut X</h1>
+    <form id="pinGateForm" autocomplete="off">
+      <input id="pinGateInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="••••••••" autofocus
+        style="width:100%;box-sizing:border-box;font-size:1.6em;letter-spacing:6px;text-align:center;padding:10px;border-radius:8px;border:1px solid #223;background:#050c18;color:#fff;margin-bottom:14px">
+      <button type="submit" style="width:100%;padding:10px;border-radius:8px;border:none;background:#00e5a0;color:#020810;font-weight:700;font-size:1em;cursor:pointer">Wejdź</button>
+    </form>
+    <div id="pinGateErr" style="color:#ff3d5a;font-size:.85em;margin-top:10px;min-height:1.2em"></div>
+  </div>
+</div>
+<script>
+(function() {
+  var PIN_BOT_BASE = 'https://swingai-revolut.tomek-falek.workers.dev';
+  function showOverlay() { var o = document.getElementById('pin-overlay'); if (o) o.style.display = 'flex'; }
+  function hideOverlay() { var o = document.getElementById('pin-overlay'); if (o) o.style.display = 'none'; }
+  function checkSession() {
+    fetch(PIN_BOT_BASE + '/session-check', { credentials: 'include' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if (d && d.ok) hideOverlay(); else showOverlay(); })
+      .catch(function(){ showOverlay(); });
+  }
+  document.addEventListener('DOMContentLoaded', function() {
+    checkSession();
+    var form = document.getElementById('pinGateForm');
+    var input = document.getElementById('pinGateInput');
+    var err = document.getElementById('pinGateErr');
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      var pin = input.value.trim();
+      if (pin.length !== 8) { err.textContent = 'PIN musi mieć 8 cyfr'; return; }
+      err.textContent = '';
+      var btn = form.querySelector('button');
+      btn.disabled = true;
+      fetch(PIN_BOT_BASE + '/verify-pin', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pin })
+      })
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+          if (d && d.ok) { hideOverlay(); }
+          else { err.textContent = (d && d.error) || 'Błąd'; input.value = ''; btn.disabled = false; }
+        })
+        .catch(function() { err.textContent = 'Błąd połączenia'; btn.disabled = false; });
+    });
+  });
+  window._pinGateBase = PIN_BOT_BASE;
+
+  window.changeBotPin = function() {
+    var oldEl = document.getElementById('cfg-pin-old');
+    var newEl = document.getElementById('cfg-pin-new');
+    var statusEl = document.getElementById('pin-change-status');
+    var oldPin = oldEl ? oldEl.value.trim() : '';
+    var newPin = newEl ? newEl.value.trim() : '';
+    if (!/^\d{8}$/.test(oldPin)) { if (statusEl) { statusEl.textContent = 'Podaj aktualny PIN (8 cyfr)'; statusEl.style.color = 'var(--red)'; } return; }
+    if (!/^\d{8}$/.test(newPin)) { if (statusEl) { statusEl.textContent = 'Nowy PIN musi mieć 8 cyfr'; statusEl.style.color = 'var(--red)'; } return; }
+    if (statusEl) { statusEl.textContent = 'Zapisywanie...'; statusEl.style.color = 'var(--text2)'; }
+    fetch(PIN_BOT_BASE + '/change-pin', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oldPin: oldPin, newPin: newPin })
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (d && d.ok) {
+          if (statusEl) { statusEl.textContent = 'PIN zmieniony'; statusEl.style.color = 'var(--green)'; }
+          if (oldEl) oldEl.value = ''; if (newEl) newEl.value = '';
+        } else if (statusEl) { statusEl.textContent = (d && d.error) || 'Błąd zmiany PIN'; statusEl.style.color = 'var(--red)'; }
+      })
+      .catch(function(e) { if (statusEl) { statusEl.textContent = 'Błąd połączenia: ' + e.message; statusEl.style.color = 'var(--red)'; } });
+  };
+
+  window.clearBotStats = function() {
+    if (!confirm('Usunąć historię tradów i wytrenowane modele AI (NB/GBM/QL)? Otwarte pozycje i ustawienia zostaną bez zmian. Operacja nieodwracalna.')) return;
+    var statusEl = document.getElementById('clear-stats-status');
+    if (statusEl) { statusEl.textContent = 'Czyszczenie...'; statusEl.style.color = 'var(--text2)'; }
+    fetch(PIN_BOT_BASE + '/clear-stats', { method: 'POST', credentials: 'include' })
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (d && d.ok) {
+          if (statusEl) { statusEl.textContent = 'Statystyki i modele AI wyczyszczone'; statusEl.style.color = 'var(--green)'; }
+          try { if (typeof renderStats === 'function') renderStats(); if (typeof renderHistory === 'function') renderHistory(); } catch(e) {}
+        } else if (statusEl) { statusEl.textContent = (d && d.error) || 'Błąd czyszczenia'; statusEl.style.color = 'var(--red)'; }
+      })
+      .catch(function(e) { if (statusEl) { statusEl.textContent = 'Błąd połączenia: ' + e.message; statusEl.style.color = 'var(--red)'; } });
+  };
+})();
+</script>
+
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
 
@@ -604,7 +698,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
           <div class="r2" style="margin-bottom:6px"><span class="lbl">Cel zysku %</span><input id="ml-target" type="number" value="1.5" min="0.5" max="5" step="0.1" style="width:80px"> <small class="lbl">wzrost ceny w ciągu 12 świec (1H)</small></div>
           <button class="go" onclick="runMLOptimize()" id="ml-btn" style="width:100%;padding:7px;background:rgba(188,140,255,.15);color:var(--purple);border-color:var(--purple)">🧠 Trenuj model</button>
           <button onclick="applyMLWeights()" id="ml-apply" style="width:100%;padding:5px;margin-top:6px;display:none" class="ok-btn">✅ Zastosuj wagi w bocie</button>
-          <button onclick="trainAllAI()" style="width:100%;padding:5px;margin-top:6px;background:rgba(63,185,80,.1);color:var(--green);border-color:var(--green)">&#128260; Trenuj NB + GBM na Gate.io</button>
+          <button onclick="trainAllAI()" style="width:100%;padding:5px;margin-top:6px;background:rgba(63,185,80,.1);color:var(--green);border-color:var(--green)">&#128260; Trenuj NB + GBM na Revolut X</button>
           <div id="ml-progress" style="margin-top:8px;font-size:8.5pt;color:var(--gold);min-height:18px"></div>
         </div>
         <div>
@@ -730,6 +824,16 @@ tr:hover td{background:rgba(123,97,255,.04);}
   <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">&#128241; Telegram (opcjonalne)</div>
   <div class="form-row"><label>Bot Token</label><input id="cfg-tg-token" type="password" placeholder="123456:ABC-DEF..."></div>
   <div class="form-row"><label>Chat ID</label><input id="cfg-tg-chat" type="text" placeholder="-100123456"></div>
+  <hr style="border-color:var(--border);margin:12px 0;">
+  <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">🔒 <b>PIN dostępu do panelu</b></div>
+  <div class="form-row"><label>Aktualny PIN</label><input id="cfg-pin-old" type="password" inputmode="numeric" maxlength="8" placeholder="8 cyfr"></div>
+  <div class="form-row"><label>Nowy PIN</label><input id="cfg-pin-new" type="password" inputmode="numeric" maxlength="8" placeholder="8 cyfr"></div>
+  <div class="modal-btns"><button onclick="changeBotPin()">🔑 Zmień PIN</button></div>
+  <div id="pin-change-status" style="font-size:8.5pt;min-height:16px;margin-bottom:4px"></div>
+  <hr style="border-color:var(--border);margin:12px 0;">
+  <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">📊 <b>Statystyki i modele AI</b></div>
+  <div class="modal-btns"><button class="stop-btn" onclick="clearBotStats()">🗑️ Wyczyść statystyki (reset AI)</button></div>
+  <div id="clear-stats-status" style="font-size:8.5pt;min-height:16px;margin-bottom:4px"></div>
   <div class="modal-btns"><button class="go" onclick="saveSettings()">&#128190; Zapisz</button><button onclick="testConn()">&#128299; Test</button><button class="stop-btn" onclick="deleteApiKeys()">&#128273; Usuń klucze</button><button class="stop-btn" onclick="resetAll()">&#128465; Reset</button><button onclick="closeOverlay('modal-cfg')" style="margin-left:auto">Zamknij</button></div>
   <div id="cfg-status" style="margin-top:8px;font-size:9pt;min-height:18px;color:var(--text2)"></div>
 </div></div>
@@ -1337,28 +1441,25 @@ async function pub(path, params={}) {
 }
 async function getKlines(sym,tf,limit){
   limit=limit||200;
-  const kMap={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
-  const kSym=kMap[sym]||(sym.replace('_',''));
-  const tfMap={'1d':'1440','4h':'240','1h':'60','15m':'15','5m':'5'};const kTf=tfMap[tf]||'5';
-  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/0/public/OHLC')+'&qs='+encodeURIComponent('pair='+kSym+'&interval='+kTf);
+  // Revolut X format: "BTC/USDC" - to zamiana podkreslnika na slash, 1:1 z
+  // revxInstrument() w workerze. Interval Revolut X = minuty, tak jak tfMap nizej.
+  const rSym=sym.replace('_','/');
+  const tfMap={'1d':'1440','4h':'240','1h':'60','15m':'15','5m':'5'};const rTf=tfMap[tf]||'5';
+  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/1.0/public/candles/'+rSym)+'&qs='+encodeURIComponent('interval='+rTf);
   const r=await fetchWithTimeout(url,15000);const d=await r.json();
-  if(d.error&&d.error.length) throw new Error('Kraken OHLC: '+d.error[0]);
-  const key=Object.keys(d.result||{}).find(function(k){return k!=='last';});
-  const rows=key?d.result[key]:[];
-  return rows.slice(-limit).map(function(k){return [+k[0]*1000,+k[1],+k[2],+k[3],+k[4],+k[6]];});
+  const rows=Array.isArray(d.data)?d.data:[];
+  return rows.slice(-limit).map(function(k){return [+k.start,+k.open,+k.high,+k.low,+k.close,+k.volume];});
 }
 async function getTicker(sym){
-  const kMap={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
-  const kSym=kMap[sym]||(sym.replace('_',''));
-  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/0/public/Ticker')+'&qs='+encodeURIComponent('pair='+kSym);
+  const rSym=sym.replace('_','/');
+  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/1.0/public/tickers')+'&qs='+encodeURIComponent('symbols='+rSym);
   const r=await fetchWithTimeout(url,10000);
   if(!r.ok) throw new Error('getTicker HTTP '+r.status+' '+sym);
   const d=await r.json();
-  if(d.error&&d.error.length) throw new Error('getTicker Kraken: '+d.error[0]);
-  const key=Object.keys(d.result||{})[0];const t=key?d.result[key]:null;
+  const t=(d.data||[]).find(function(x){return x.symbol===rSym;});
   if(!t) throw new Error('getTicker: brak danych '+sym);
-  const last=t.c[0];const open=t.o;
-  const changePct=open&&+open>0?((+last-+open)/+open*100).toFixed(2):'0';
+  const last=t.last_price;const chg24h=+t.price_change_24h;const open=last-chg24h;
+  const changePct=open&&open>0?(chg24h/open*100).toFixed(2):'0';
   return {lastPrice:last,priceChangePercent:changePct};
 }
 
@@ -3321,7 +3422,7 @@ async function testConn() {
   const url=(gi('cfg-worker').value||'').trim().replace(/\/+/,'');
   const tok=(gi('cfg-auth-token').value||'swingai-revolut-2024').trim();
   const lines=[];
-  try{const pb=(url||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'');const r=await fetchWithTimeout(pb+'/market?path='+encodeURIComponent('/api/v4/spot/tickers')+'&qs='+encodeURIComponent('currency_pair=BTC_USDC'),{signal:AbortSignal.timeout(10000)});const d=await r.json();const btc=(Array.isArray(d)?d:[])[0];lines.push('Gate.io OK | BTC: $'+(btc?(+btc.last).toFixed(0):'?'));}catch(e){lines.push('Gate.io ERR: '+e.message);}
+  try{const pb=(url||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'');const r=await fetchWithTimeout(pb+'/market?path='+encodeURIComponent('/1.0/public/tickers')+'&qs='+encodeURIComponent('symbols=BTC/USDC'),{signal:AbortSignal.timeout(10000)});const d=await r.json();const btc=(d.data||[])[0];lines.push('Revolut X OK | BTC: $'+(btc?(+btc.last_price).toFixed(0):'?'));}catch(e){lines.push('Revolut X ERR: '+e.message);}
   if(url){try{const r=await fetchWithTimeout(url+'/status?auth='+encodeURIComponent(tok),{signal:AbortSignal.timeout(10000)});if(r.ok){const d=await r.json();lines.push('Worker OK | tryb: '+(d.config&&d.config.mode||'?')+' iter: '+(d.state&&d.state.iter||0));if(d.state&&d.state.liveBalance)lines.push('Saldo USDC: $'+d.state.liveBalance.toFixed(2));}else{lines.push('Worker HTTP '+r.status);}}catch(e){lines.push('Worker ERR: '+e.message);}}else{lines.push('Brak Worker URL');}
   s.innerHTML=lines.map(function(l){return (l.indexOf('OK')>=0)?'<span style="color:var(--green)">'+l+'</span>':'<span style="color:var(--red)">'+l+'</span>';}).join('<br>');
 }
@@ -3371,18 +3472,17 @@ var OBI = {
     try {
       var result;
       {
-        // Kraken orderbook
-        var kMap2={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
-        var kSym2=kMap2[sym]||(sym.replace('_',''));
-        var d=await fetchWithTimeout((CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/0/public/Depth')+'&qs='+encodeURIComponent('pair='+kSym2+'&count=20'),10000);
+        // Revolut X orderbook - obiekty {price,quantity,count}, nie tablice [price,vol] jak Kraken
+        var rSym2=sym.replace('_','/');
+        var d=await fetchWithTimeout((CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/2.0/public/order-book/'+rSym2)+'&qs='+encodeURIComponent('limit=20'),10000);
         var dj = await d.json();
-        var key2=Object.keys(dj.result||{})[0];var book=key2?dj.result[key2]:{bids:[],asks:[]};
-        var bidVol = (book.bids||[]).reduce(function(s,b){ var v=(parseFloat(b[0])||0)*(parseFloat(b[1])||0); return s+(isFinite(v)?v:0); }, 0);
-        var askVol = (book.asks||[]).reduce(function(s,a){ var v=(parseFloat(a[0])||0)*(parseFloat(a[1])||0); return s+(isFinite(v)?v:0); }, 0);
+        var book=dj.data||{bids:[],asks:[]};
+        var bidVol = (book.bids||[]).reduce(function(s,b){ var v=(parseFloat(b.price)||0)*(parseFloat(b.quantity)||0); return s+(isFinite(v)?v:0); }, 0);
+        var askVol = (book.asks||[]).reduce(function(s,a){ var v=(parseFloat(a.price)||0)*(parseFloat(a.quantity)||0); return s+(isFinite(v)?v:0); }, 0);
         var total  = bidVol + askVol;
         var ratio  = total > 0 ? bidVol / total : 0.5;
         var spread = book.asks[0] && book.bids[0]
-          ? (parseFloat(book.asks[0][0]) - parseFloat(book.bids[0][0])) / parseFloat(book.bids[0][0]) * 100
+          ? (parseFloat(book.asks[0].price) - parseFloat(book.bids[0].price)) / parseFloat(book.bids[0].price) * 100
           : 0;
         result = { ratio:+ratio.toFixed(3), bidVol:bidVol, askVol:askVol, spread:+spread.toFixed(4), ts:now };
       }
@@ -4950,8 +5050,17 @@ if (_modelsLoaded) {
 // ═══════════════════════════════════════════════════════════════
 // TOAST NOTIFICATIONS
 // ═══════════════════════════════════════════════════════════════
-var _soundOn = (localStorage.getItem('swingai_sound') === '1');
+// BUG: domyslnie dzwiek byl WYLACZONY dopoki uzytkownik sam nie kliknal
+// przelacznika - w praktyce nikt go nie odkrywal, wiec sygnaly dzwiekowe
+// "nie dzialaly" mimo ze caly mechanizm byl poprawny. Domyslnie ON, mozna wylaczyc.
+var _soundOn = (localStorage.getItem('swingai_sound') !== '0');
 var _audioCtx = null;
+// AudioContext wymaga gestu uzytkownika by wyjsc ze stanu 'suspended' (polityka
+// autoplay przegladarek) - bez tego dzwieki tworzone programowo (np. przy
+// automatycznym zamknieciu pozycji) moglyby nie byc slyszalne mimo ze _soundOn=true.
+document.addEventListener('click', function() {
+  if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
+}, { once: false });
 
 function _applySoundState() {
   var btn = gi('sound-toggle');
@@ -5000,6 +5109,22 @@ function playSound(type) {
     gain.gain.setValueAtTime(0.07, _audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.3);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.3);
+  } else if (type === 'ok') {
+    // BUG: zamkniecie pozycji na proficie wywoluje toast(...,'ok',...) - bez tej
+    // galezi playSound() nie mial ZADNEGO dopasowania dla 'ok'/'err', wiec przy
+    // zamknieciu pozycji nie bylo dzwieku niezaleznie od ustawienia sound-toggle.
+    osc.frequency.setValueAtTime(659, _audioCtx.currentTime);
+    osc.frequency.setValueAtTime(880, _audioCtx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.13, _audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.35);
+    osc.start(); osc.stop(_audioCtx.currentTime + 0.35);
+  } else if (type === 'err') {
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(300, _audioCtx.currentTime);
+    osc.frequency.setValueAtTime(220, _audioCtx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.1, _audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.4);
+    osc.start(); osc.stop(_audioCtx.currentTime + 0.4);
   }
 }
 
@@ -5325,6 +5450,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </body>
 
 </html>
+
 
 
 
