@@ -1,6 +1,9 @@
 // SwingAI Bot 24/7 — Cloudflare Worker — REVOLUT X VERSION
 // Multi-TF DAY TRADING (1H+15min+5min), NB+GBM+QL, SMC, PATTERNS, Kelly, ATR-TP/SL, CORR, OBI
-// Market data: Kraken public API (Gate.io/Binance/Bybit blokuja CF Workers) | Execution: Revolut X (Ed25519)
+// Market data: Revolut X public API (revx.revolut.com/api/1.0/public/*) | Execution: Revolut X (Ed25519)
+// Dane i egzekucja z JEDNEJ gieldy (Revolut X) - zero rozjazdu miedzy cena analizy
+// a cena wykonania, i zero kolizji limitu zapytan z botem MEXC/swing (ktory uzywa
+// Krakena) dzialajacym na tym samym koncie Cloudflare.
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // KONFIGURACJA
@@ -50,17 +53,105 @@ export default {
 
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    // Endpointy PIN-gate/sesji wolane przez index.html na github.io - to jest
+    // request CROSS-SITE (inna domena niz workers.dev), wiec cookie sesji musi byc
+    // SameSite=None+Secure i CORS musi zwracac KONKRETNE origin (nie '*') razem z
+    // Allow-Credentials:true - inaczej przegladarka po cichu nie wysle/nie odczyta
+    // cookie i caly PIN-gate nie zadziala pomimo poprawnej logiki po stronie serwera.
+    const PIN_PATHS = ['/verify-pin', '/change-pin', '/session-check', '/clear-stats'];
     if (request.method === 'OPTIONS')
-      return new Response(null, { status: 204, headers: corsHeaders() });
+      return new Response(null, { status: 204, headers: PIN_PATHS.includes(url.pathname) ? pinCorsHeaders(request) : corsHeaders() });
 
     // AUTENTYKACJA
     const AUTH_SECRET = env.AUTH_SECRET || 'swingai-revolut-2024';
     const authHeader  = request.headers.get('Authorization') || '';
     const authParam   = url.searchParams.get('auth') || '';
     const isAuth = authHeader === 'Bearer ' + AUTH_SECRET || authParam === AUTH_SECRET;
-    const publicPaths = ['/', '/state-public', '/market'];
+    const publicPaths = ['/', '/state-public', '/market', ...PIN_PATHS];
     if (!isAuth && !publicPaths.includes(url.pathname)) {
       return new Response('Unauthorized', { status: 401, headers: corsHeaders() });
+    }
+
+    // ── PIN GATE ────────────────────────────────────────────────────────
+    // Identyczny mechanizm jak w swingai-bot/MEXC: PIN (hash SHA-256) w KV pod
+    // 'pinHash', sesja w cookie (KV 'sess_<id>'), limit 5 nieudanych prob/15 min
+    // na IP w KV 'pinfail_<ip>'. Roznica: tam Worker sam serwuje HTML dashboardu
+    // (ten sam origin), tutaj index.html jest statycznym plikiem na GitHub Pages
+    // (INNY origin) - stad SameSite=None+Secure i pinCorsHeaders() zamiast Lax+'*'.
+    if (url.pathname === '/verify-pin' && request.method === 'POST') {
+      const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const rl = await checkPinRateLimit(env, ip);
+      if (rl.blocked) return pinJsonResp({ ok:false, error:'Za wiele nieudanych prob. Sprobuj za 15 minut.' }, 429, request);
+      let pin = '';
+      try { const body = await request.json(); pin = String(body.pin || ''); } catch(e) {}
+      const storedHash = await env.SWINGAI_REVOLUT_KV.get('pinHash');
+      const inputHash  = await sha256Hex(pin);
+      if (!storedHash || inputHash !== storedHash) {
+        await recordPinFail(env, rl.key);
+        return pinJsonResp({ ok:false, error:'Nieprawidlowy PIN' }, 401, request);
+      }
+      await clearPinFail(env, rl.key);
+      const sid = randomToken(32);
+      await env.SWINGAI_REVOLUT_KV.put('sess_' + sid, '1', { expirationTtl: 30 * 24 * 3600 });
+      const headers = Object.assign({ 'Content-Type': 'application/json' }, pinCorsHeaders(request));
+      headers['Set-Cookie'] = 'swingai_sess=' + sid + '; Path=/; Max-Age=' + (30*24*3600) + '; HttpOnly; Secure; SameSite=None';
+      return new Response(JSON.stringify({ ok:true }), { headers });
+    }
+
+    if (url.pathname === '/session-check') {
+      const ok = await isValidSession(env, request);
+      return pinJsonResp({ ok }, 200, request);
+    }
+
+    if (url.pathname === '/change-pin' && request.method === 'POST') {
+      const sessionOk = await isValidSession(env, request);
+      if (!sessionOk) return pinJsonResp({ ok:false, error:'Sesja wygasla — zaloguj sie ponownie' }, 401, request);
+      const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const rl = await checkPinRateLimit(env, ip);
+      if (rl.blocked) return pinJsonResp({ ok:false, error:'Za wiele nieudanych prob. Sprobuj za 15 minut.' }, 429, request);
+      let oldPin = '', newPin = '';
+      try { const body = await request.json(); oldPin = String(body.oldPin || ''); newPin = String(body.newPin || ''); } catch(e) {}
+      if (!/^\d{8}$/.test(newPin)) return pinJsonResp({ ok:false, error:'Nowy PIN musi miec 8 cyfr' }, 400, request);
+      const storedHash = await env.SWINGAI_REVOLUT_KV.get('pinHash');
+      const oldHash    = await sha256Hex(oldPin);
+      if (!storedHash || oldHash !== storedHash) {
+        await recordPinFail(env, rl.key);
+        return pinJsonResp({ ok:false, error:'Aktualny PIN nieprawidlowy' }, 401, request);
+      }
+      await clearPinFail(env, rl.key);
+      const newHash = await sha256Hex(newPin);
+      await env.SWINGAI_REVOLUT_KV.put('pinHash', newHash);
+      return pinJsonResp({ ok:true }, 200, request);
+    }
+
+    // Manualne czyszczenie statystyk/modeli AI - uzytkownik testowal recznymi
+    // zamknieciami pozycji, co zafalszowalo winrate i wytrenowane modele (NB/GBM/QL
+    // uczyly sie na tych testowych tradach). Reset NIE dotyka aktywnych pozycji ani
+    // config (klucze API, PIN) - tylko historii/statystyk/modeli.
+    if (url.pathname === '/clear-stats' && request.method === 'POST') {
+      const sessionOk = await isValidSession(env, request);
+      if (!sessionOk) return pinJsonResp({ ok:false, error:'Sesja wygasla — zaloguj sie ponownie' }, 401, request);
+      const cfg = await getConfig(env);
+      const state = await getState(env);
+      state.trades = [];
+      state.stats = null;
+      state.nb = null;
+      state.gbm = null;
+      state.ql = null;
+      state.ensembleW = null;
+      state.pairParams = {};
+      state.adaptiveMinScore = cfg.minScore;
+      state.dailyPnl = 0;
+      state.dailyStartBalance = 0;
+      state.peakBalance = 0;
+      state.drawdownBlock = 0;
+      state.consLoss = 0;
+      state.cooldown = {};
+      state.globalBlockUntil = 0;
+      state.lastGbmRefit = 0;
+      addLog(state, 'Statystyki i modele AI wyczyszczone recznie (pozycje i config bez zmian)', 'warn');
+      await env.SWINGAI_REVOLUT_KV.put('state', JSON.stringify(state));
+      return pinJsonResp({ ok:true }, 200, request);
     }
 
     // Dashboard
@@ -255,20 +346,22 @@ export default {
     }
 
 
-    // Proxy Kraken — publiczny endpoint dla dashboard
+    // Proxy Revolut X — publiczny endpoint dla wykresow dashboard (CORS: revx.revolut.com
+    // nie wysyla Access-Control-Allow-Origin, wiec przegladarka nie moze wywolac go
+    // bezposrednio z index.html na github.io - musi isc przez ten proxy Workera).
     if (url.pathname === '/market') {
       const path = url.searchParams.get('path') || '';
       const qs   = url.searchParams.get('qs')   || '';
       if (path.includes('..') || qs.includes('..')) {
         return new Response('Forbidden', { status: 403, headers: corsHeaders() });
       }
-      const allowed = ['/0/public/OHLC', '/0/public/Ticker', '/0/public/Depth'];
-      if (!allowed.includes(path.split('?')[0])) {
+      const allowedPrefixes = ['/1.0/public/candles/', '/1.0/public/tickers', '/2.0/public/order-book/'];
+      if (!allowedPrefixes.some(p => path.startsWith(p))) {
         return new Response('Forbidden', { status: 403, headers: corsHeaders() });
       }
       try {
-        const krakenUrl = 'https://api.kraken.com' + path + (qs ? '?' + qs : '');
-        const r = await fetchWithTimeout(krakenUrl, 8000, { headers: { 'User-Agent': 'SwingAI/1.0' } });
+        const revxUrl = REVX_PUBLIC_BASE + path + (qs ? '?' + qs : '');
+        const r = await fetchWithTimeout(revxUrl, 8000, { headers: { 'User-Agent': 'SwingAI/1.0' } });
         const body = await r.text();
         return new Response(body, { status: r.status, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
       } catch(e) {
@@ -617,11 +710,11 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   // celowo - caly scoring nizej (RSI/MACD/BB na kazdym TF) dziala identycznie,
   // tylko dostaje dane z krotszych, wlasciwych dla intraday okien czasowych.
   const kd      = await getKlines(sym, '60',  200);
-  await sleep(200);
+  await sleep(400);
   const k4h     = await getKlines(sym, '15',  100);
-  await sleep(200);
+  await sleep(400);
   const k1h     = await getKlines(sym, '5',   50);
-  await sleep(200);
+  await sleep(400);
   const obiData = await getOrderbook(sym);
 
   // Gate.io format: [timestamp_ms, open, high, low, close, volume] po mapowaniu w getKlines
@@ -945,7 +1038,8 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   if ((state.globalBlockUntil||0) > Date.now()) {
     addLog(state, 'Globalna blokada aktywna', 'warn'); return;
   }
-  if (isPumpDump(sig)) return;
+  const pumpReason = isPumpDump(sig);
+  if (pumpReason) { addLog(state, 'Pump/dump guard (' + pumpReason + '): ' + sig.sym + ' — pomijam', 'warn'); return; }
   if (isVolumeAnomaly(sig)) { addLog(state, 'Vol anomaly: ' + sig.sym + ' vol=' + sig.volR.toFixed(2) + 'x — pomijam', 'warn'); return; }
   if (isDeadHour()) { addLog(state, 'Dead hour (01-05 UTC): ' + sig.sym + ' — pomijam', 'warn'); return; }
 
@@ -1134,9 +1228,17 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
 // GUARDS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function isPumpDump(sig) {
-  if (sig.vol4R > 4.0) return true;
-  if (sig.mom5  > 15)  return true;
-  return false;
+  // UWAGA: progi 4.0x/15% skopiowane z wersji SWINGOWEJ dzialaly tam na oknach
+  // 4H/5-dniowym. Tutaj (day trading) mom5/mom10 sa liczone na swiecach 1H, czyli
+  // to jest ruch z ostatnich 5h/10h, nie 5/10 DNI - te sama liczba % w 100x krotszym
+  // oknie oznacza ruch dramatycznie bardziej ekstremalny. Bez przeskalowania progi
+  // byly w praktyce nie do przekroczenia (martwy filtr), a jego zadaniem jest
+  // wlasnie blokowac wchodzenie "na gorce" po tym jak cena juz solidnie wystrzelila
+  // w ramach tej samej sesji.
+  if (sig.vol4R > 4.0)  return 'vol4R=' + sig.vol4R.toFixed(1) + 'x';
+  if (sig.mom5  > 8)    return 'mom5=' + sig.mom5.toFixed(1) + '%/5h';
+  if (sig.mom10 > 12)   return 'mom10=' + sig.mom10.toFixed(1) + '%/10h';
+  return null;
 }
 
 function isVolumeAnomaly(sig) {
@@ -1152,14 +1254,13 @@ function isDeadHour() {
 
 async function btcDropGuard() {
   try {
-    const r = await fetchWithTimeout('https://api.kraken.com/0/public/Ticker?pair=XBTUSDT');
+    const r = await fetchWithTimeout(`${REVX_PUBLIC_BASE}/1.0/public/tickers?symbols=${encodeURIComponent('BTC/USDC')}`);
     const d = await r.json();
-    if (d.error && d.error.length > 0) return false;
-    const key = Object.keys(d.result || {})[0];
-    if (!key) return false;
-    const t = d.result[key];
-    const open24h = +t.o;
-    const last    = +t.c[0];
+    const t = (d.data || []).find(x => x.symbol === 'BTC/USDC');
+    if (!t) return false;
+    const last = +t.last_price;
+    const chg24h = +t.price_change_24h; // Revolut X zwraca zmiane absolutna, nie %
+    const open24h = last - chg24h;
     if (!open24h) return false;
     return (last - open24h) / open24h * 100 < -5;
   } catch(e) { return false; }
@@ -1609,8 +1710,17 @@ function atr(h, l, c, p=14) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// MARKET DATA — GATE.IO (public, no auth)
+// MARKET DATA — REVOLUT X (public, no auth) — https://revx.revolut.com/api
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Zweryfikowane empirycznie 2026-09-02: /1.0/public/candles/{symbol}?interval=<min>
+// (interwal w MINUTACH - dokladnie te same wartosci '60'/'15'/'5' co juz uzywa ten
+// kod, zero mapowania), /1.0/public/tickers?symbols=<symbol>, /2.0/public/order-book/
+// {symbol}?limit=<n>. Symbol w formacie "BTC/USDC" (ze slashem) - to jest DOKLADNIE
+// to co zwraca juz istniejaca revxInstrument(sym), wiec dane i egzekucja uzywaja
+// tego samego mapowania symboli (zero rozjazdu). Candles wracaja juz w kolejnosci
+// najstarsza->najnowsza (bez potrzeby .reverse()).
+const REVX_PUBLIC_BASE = 'https://revx.revolut.com/api';
+
 function fetchWithTimeout(url, ms, opts) {
   ms = ms || 8000;
   const ctrl = new AbortController();
@@ -1619,44 +1729,52 @@ function fetchWithTimeout(url, ms, opts) {
   return fetch(url, options).finally(() => clearTimeout(tid));
 }
 
+// Revolut X public API zwraca 429 pod obciazeniem (zweryfikowane empirycznie -
+// pierwszy test 4-parowego cyklu zlapal 429 na 3 z 4 par). Retry z rosnacym
+// backoffem (500/1500/3000ms), analogicznie do retry na Krakenie w bocie MEXC.
+async function fetchRevxPublicWithRetry(url, tries) {
+  tries = tries || 3;
+  const delays = [500, 1500, 3000];
+  let lastErr;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const r = await fetchWithTimeout(url, 8000);
+      if (r.status === 429) { lastErr = new Error('Revolut X: HTTP 429 (rate limit)'); }
+      else if (!r.ok) { lastErr = new Error('Revolut X: HTTP ' + r.status); }
+      else { return await r.json(); }
+    } catch(e) { lastErr = e; }
+    if (attempt < tries - 1) await sleep(delays[attempt] || 3000);
+  }
+  throw lastErr || new Error('Revolut X: nieznany blad');
+}
+
 async function getKlines(sym, interval, limit) {
-  // Kraken public API — nie blokuje CF Workers
-  const ivMap = { 'D':'1440', '240':'240', '60':'60', '30':'30', '15':'15', '5':'5', '1':'1' };
-  const iv = ivMap[interval] || '1440';
-  const r = await fetchWithTimeout(
-    `https://api.kraken.com/0/public/OHLC?pair=${sym}&interval=${iv}&count=${limit}`
+  const instr = revxInstrument(sym);
+  const d = await fetchRevxPublicWithRetry(
+    `${REVX_PUBLIC_BASE}/1.0/public/candles/${encodeURIComponent(instr)}?interval=${interval}`
   );
-  if (!r.ok) throw new Error('getKlines HTTP ' + r.status + ' ' + sym);
-  const d = await r.json();
-  if (d.error && d.error.length > 0) throw new Error('getKlines Kraken: ' + d.error[0] + ' ' + sym);
-  const key = Object.keys(d.result || {}).find(k => k !== 'last');
-  if (!key) throw new Error('getKlines: brak danych ' + sym);
-  const list = d.result[key];
+  const list = d.data;
   if (!Array.isArray(list) || list.length === 0) throw new Error('getKlines: pusta lista ' + sym);
-  // Kraken: [time, open, high, low, close, vwap, volume, count]
-  return list.map(k => [+k[0]*1000, +k[1], +k[2], +k[3], +k[4], +k[6]]);
+  const sliced = list.slice(-limit);
+  return sliced.map(k => [+k.start, +k.open, +k.high, +k.low, +k.close, +k.volume]);
 }
 
 async function getLastPrice(sym) {
-  const r = await fetchWithTimeout(`https://api.kraken.com/0/public/Ticker?pair=${sym}`);
-  if (!r.ok) throw new Error('getPrice HTTP ' + r.status);
-  const d = await r.json();
-  if (d.error && d.error.length > 0) throw new Error('getPrice Kraken: ' + d.error[0]);
-  const key = Object.keys(d.result || {})[0];
-  if (!key) throw new Error('getPrice: brak danych ' + sym);
-  return +d.result[key].c[0];
+  const instr = revxInstrument(sym);
+  const d = await fetchRevxPublicWithRetry(`${REVX_PUBLIC_BASE}/1.0/public/tickers?symbols=${encodeURIComponent(instr)}`);
+  const t = (d.data || []).find(x => x.symbol === instr);
+  if (!t) throw new Error('getPrice: brak danych ' + sym);
+  return +t.last_price;
 }
 
 async function getOrderbook(sym) {
   try {
-    const r = await fetchWithTimeout(`https://api.kraken.com/0/public/Depth?pair=${sym}&count=20`);
-    if (!r.ok) return { ratio: 0.5 };
-    const d = await r.json();
-    if (d.error && d.error.length > 0) return { ratio: 0.5 };
-    const key = Object.keys(d.result || {})[0];
-    if (!key) return { ratio: 0.5 };
-    const bids = d.result[key].bids.reduce((s, x) => s + +x[1], 0);
-    const asks = d.result[key].asks.reduce((s, x) => s + +x[1], 0);
+    const instr = revxInstrument(sym);
+    const d = await fetchRevxPublicWithRetry(`${REVX_PUBLIC_BASE}/2.0/public/order-book/${encodeURIComponent(instr)}?limit=20`, 2);
+    const book = d.data;
+    if (!book || !book.bids || !book.asks) return { ratio: 0.5 };
+    const bids = book.bids.reduce((s, x) => s + +x.quantity, 0);
+    const asks = book.asks.reduce((s, x) => s + +x.quantity, 0);
     const total = bids + asks;
     return { ratio: total > 0 ? bids / total : 0.5, bids, asks };
   } catch(e) { return { ratio: 0.5 }; }
@@ -1827,6 +1945,64 @@ async function tgSend(cfg, msg) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PIN GATE — HELPERY (sesje, hash, rate-limit, CORS z credentials)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function randomToken(len) {
+  const bytes = new Uint8Array(len || 32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function getCookie(request, name) {
+  const cookie = request.headers.get('Cookie') || '';
+  for (const part of cookie.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) return part.slice(idx + 1).trim();
+  }
+  return null;
+}
+async function isValidSession(env, request) {
+  const sid = getCookie(request, 'swingai_sess');
+  if (!sid) return false;
+  const v = await env.SWINGAI_REVOLUT_KV.get('sess_' + sid);
+  return !!v;
+}
+async function checkPinRateLimit(env, ip) {
+  const key = 'pinfail_' + ip;
+  const raw = await env.SWINGAI_REVOLUT_KV.get(key);
+  const count = raw ? (parseInt(raw, 10) || 0) : 0;
+  return { blocked: count >= 5, key };
+}
+async function recordPinFail(env, key) {
+  const raw = await env.SWINGAI_REVOLUT_KV.get(key);
+  const count = (raw ? (parseInt(raw, 10) || 0) : 0) + 1;
+  await env.SWINGAI_REVOLUT_KV.put(key, String(count), { expirationTtl: 900 });
+}
+async function clearPinFail(env, key) {
+  try { await env.SWINGAI_REVOLUT_KV.delete(key); } catch(e) {}
+}
+// Zezwalamy na credentialed cross-site fetch (cookie sesji) TYLKO z domen GitHub
+// Pages tego projektu - w przeciwienstwie do reszty API (corsHeaders(), '*', bez
+// credentials) ktore obsluguje dane publiczne bez sesji.
+function pinCorsHeaders(request) {
+  const origin = request.headers.get('Origin') || '';
+  const allowed = origin.endsWith('.github.io') || origin === 'https://tomekfalek-cyber.github.io';
+  return {
+    'Access-Control-Allow-Origin': allowed ? origin : 'https://tomekfalek-cyber.github.io',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    'Access-Control-Allow-Credentials': 'true'
+  };
+}
+function pinJsonResp(data, status, request) {
+  return new Response(JSON.stringify(data), { status: status || 200, headers: Object.assign({ 'Content-Type': 'application/json' }, pinCorsHeaders(request)) });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // KV HELPERS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async function getConfig(env) {
@@ -1898,5 +2074,6 @@ function redirectHTML(msg) {
 <style>body{background:#020810;color:#00e5a0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-size:1.4em;flex-direction:column;gap:12px;}</style>
 </head><body><div>${msg}</div><div style="color:#334d74;font-size:0.5em">Przekierowanie za 2 sekundy...</div></body></html>`;
 }
+
 
 
