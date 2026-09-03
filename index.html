@@ -1,4 +1,4 @@
-﻿﻿<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pl">
 <head>
 <meta charset="UTF-8">
@@ -16,8 +16,8 @@
   --bg5:#252525;
   --glass:rgba(15,15,15,0.85);
   --text:#f5f5f5;
-  --text2:#999999;
-  --text3:#555555;
+  --text2:#c2c2c8;
+  --text3:#9a9aa2;
   --accent:#FF5F00;
   --accent2:#E05000;
   --gold:#f0b429;
@@ -2492,7 +2492,7 @@ function _beep(freqs, durMs, type) {
       osc.frequency.value = f;
       var start = t0 + i * (durMs/1000);
       gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.22, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.55, start + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, start + durMs/1000);
       osc.connect(gain); gain.connect(ctx.destination);
       osc.start(start); osc.stop(start + durMs/1000 + 0.02);
@@ -5092,21 +5092,21 @@ function playSound(type) {
     osc.frequency.setValueAtTime(523, _audioCtx.currentTime);
     osc.frequency.setValueAtTime(659, _audioCtx.currentTime + 0.08);
     osc.frequency.setValueAtTime(784, _audioCtx.currentTime + 0.16);
-    gain.gain.setValueAtTime(0.15, _audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.45, _audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.4);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.4);
   } else if (type === 'sell') {
     osc.frequency.setValueAtTime(784, _audioCtx.currentTime);
     osc.frequency.setValueAtTime(659, _audioCtx.currentTime + 0.1);
     osc.frequency.setValueAtTime(440, _audioCtx.currentTime + 0.2);
-    gain.gain.setValueAtTime(0.12, _audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.4, _audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.45);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.45);
   } else if (type === 'warn') {
     osc.type = 'square';
     osc.frequency.setValueAtTime(330, _audioCtx.currentTime);
     osc.frequency.setValueAtTime(330, _audioCtx.currentTime + 0.12);
-    gain.gain.setValueAtTime(0.07, _audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.22, _audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.3);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.3);
   } else if (type === 'ok') {
@@ -5115,14 +5115,14 @@ function playSound(type) {
     // zamknieciu pozycji nie bylo dzwieku niezaleznie od ustawienia sound-toggle.
     osc.frequency.setValueAtTime(659, _audioCtx.currentTime);
     osc.frequency.setValueAtTime(880, _audioCtx.currentTime + 0.1);
-    gain.gain.setValueAtTime(0.13, _audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.42, _audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.35);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.35);
   } else if (type === 'err') {
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(300, _audioCtx.currentTime);
     osc.frequency.setValueAtTime(220, _audioCtx.currentTime + 0.15);
-    gain.gain.setValueAtTime(0.1, _audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.42, _audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.4);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.4);
   }
