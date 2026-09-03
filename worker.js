@@ -29,15 +29,19 @@ const CORR_GROUPS = [
 // tp/sl przeskalowane ze starych wartosci swingowych (10-18%/4-7%) na skale
 // day-trading, proporcjonalnie do defaultConfig() (tp:0.02/sl:0.01) - relatywne
 // roznice miedzy parami (BTC najcieszej, DOGE najszerzej) zostaly zachowane.
+// minScore podniesiony +4 wzgledem wersji startowej (58-62 -> 62-66) - przy
+// niskim progu i skanie co 3 min przechodzilo za duzo szumu; wyzszy prog +
+// wymog confluence (analyzeSwing) maja ograniczyc liczbe slabych wejsc bez
+// utraty czestotliwosci potrzebnej do day tradingu.
 const PAIR_PARAMS_DEFAULT = {
-  'XBTUSDT':  { tp:0.017, sl:0.008, minScore:62 },
-  'ETHUSDT':  { tp:0.020, sl:0.010, minScore:60 },
-  'SOLUSDT':  { tp:0.023, sl:0.012, minScore:58 },
-  'XRPUSDT':  { tp:0.025, sl:0.012, minScore:58 },
-  'DOGEUSDT': { tp:0.030, sl:0.014, minScore:60 },
-  'ADAUSDT':  { tp:0.023, sl:0.012, minScore:58 },
-  'AVAXUSDT': { tp:0.023, sl:0.012, minScore:58 },
-  'LINKUSDT': { tp:0.023, sl:0.012, minScore:58 }
+  'XBTUSDT':  { tp:0.017, sl:0.008, minScore:66 },
+  'ETHUSDT':  { tp:0.020, sl:0.010, minScore:64 },
+  'SOLUSDT':  { tp:0.023, sl:0.012, minScore:62 },
+  'XRPUSDT':  { tp:0.025, sl:0.012, minScore:62 },
+  'DOGEUSDT': { tp:0.030, sl:0.014, minScore:64 },
+  'ADAUSDT':  { tp:0.023, sl:0.012, minScore:62 },
+  'AVAXUSDT': { tp:0.023, sl:0.012, minScore:62 },
+  'LINKUSDT': { tp:0.023, sl:0.012, minScore:62 }
 };
 
 // Revolut X base URL
@@ -882,8 +886,11 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   if (divD.bear)  { score -= 12; why.push('RSI dywergen. niedzwiedzia 1H'); }
   if (div4h.bear) { score -= 7;  why.push('RSI dywergen. niedzwiedzia 4H'); }
 
+  // bearBias byl wczesniej tylko odpisem punktowym (-30) - latwym do przebicia
+  // innymi bonusami (SMC/dywergencje), co puszczalo longi w wyraznej bessie.
+  // Teraz to twarda blokada wejscia (buy = false nizej), nie tylko punkty.
   const bearBias = trendD === -1 && rsiD > 50;
-  if (bearBias) { score -= 30; why.push('BESSA: long wymaga silnego potwierdzenia'); }
+  if (bearBias) { score -= 30; why.push('BESSA: long zablokowany (twardy filtr)'); }
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   if (price > vwap4h) { score += 8;  why.push('Ponad VWAP'); }
@@ -897,7 +904,11 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   score = Math.max(0, Math.min(100, score));
 
   let regimeMinScoreAdj = 0;
-  if (regime === 'sideways')   { regimeMinScoreAdj = 8; }
+  // Sideways: +8 bylo za slabym filtrem wobec sumy mozliwych bonusow (np.
+  // +20 dywergencja + +15 BOS + +12 trend latwo przebijaly prog nawet w chopie).
+  // +18 realnie odcina wiekszosc sygnalow w bocznym rynku, gdzie SMC/dywergencje
+  // najczesciej daja falszywe sygnaly.
+  if (regime === 'sideways')   { regimeMinScoreAdj = 18; }
   if (regime === 'bull_trend') { score += 5; why.push('Rezim: bull trend'); }
   if (regime === 'bear_trend') { score -= 15; why.push('Rezim: bear trend'); }
   if (regime === 'volatile')   { score -= 8;  why.push('Rezim: volatile'); }
@@ -962,7 +973,22 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
 
   const pp       = pairParams[sym] || PAIR_PARAMS_DEFAULT[sym] || null;
   const minScore = (pp ? pp.minScore : adaptiveMinScore) + regimeMinScoreAdj;
-  const buy      = finalProb >= minScore / 100;
+
+  // Confluence gate: czysta suma punktowa (score) potrafi przekroczyc prog na
+  // szumie kilku niezaleznych bonusow. Wymagamy zgodnosci min. 2 z 4 niezaleznych
+  // rodzin sygnalow (trend, momentum/RSI, struktura SMC, wolumen) - odcina to
+  // wejscia, gdzie sam wysoki score nie jest potwierdzony realna struktura rynku.
+  const confluence = [
+    trendD >= 1,
+    (rsiD <= 40 || bbD.pos < 0.20 || divD.bull || div4h.bull),
+    (structure.event === 'BOS_up' || structure.event === 'CHoCH_up' || nearBullOB || (liqSweep && liqSweep.type === 'bullish')),
+    (volR > 1.3 || vol4R > 1.3)
+  ].filter(Boolean).length;
+  if (finalProb >= minScore / 100 && confluence < 2) {
+    why.push('Score OK, ale brak confluence (' + confluence + '/4 rodzin sygnalow) — wejscie odrzucone');
+  }
+
+  const buy = finalProb >= minScore / 100 && confluence >= 2 && !bearBias;
   // Sygnal SHORT - wylacznie informacyjny (Revolut X nie obsluguje marginu/shortow,
   // wiec bot NIGDY nie wykonuje realnej krotkiej sprzedazy). Wymaga symetrycznie
   // niskiego finalProb ORAZ potwierdzenia niedzwiedziej struktury SMC - samo niskie
@@ -1215,13 +1241,13 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
   if (pnl < 0) {
     state.consLoss = (state.consLoss || 0) + 1;
     if (!state.cooldown || typeof state.cooldown !== 'object') state.cooldown = {};
-    // Day trading: 45 min zamiast 12h (swing) - 12h cooldown przy 3-minutowym
-    // cyklu skanu oznaczaloby efektywnie "nie handluj ta para do jutra", co
-    // przeczy idei day tradingu w ramach jednej sesji.
-    state.cooldown[pos.sym] = Date.now() + 45 * 60000;
-    if (state.consLoss >= 4) {
-      state.globalBlockUntil = Date.now() + 60 * 60000; // 1h zamiast 3h (swing)
-      addLog(state, '4 straty z rzedu — blokada 1h', 'err');
+    // Day trading: 60 min (bylo 45) - wciaz w ramach jednej sesji, ale dluzej
+    // niz jeden cykl "zle wejscie -> szybki re-entry w te same warunki" (skan
+    // co 3 min), co ograniczalo overtrading po stracie na tej samej parze.
+    state.cooldown[pos.sym] = Date.now() + 60 * 60000;
+    if (state.consLoss >= 3) {
+      state.globalBlockUntil = Date.now() + 90 * 60000; // bylo: 4 straty -> 1h
+      addLog(state, '3 straty z rzedu — blokada 90 min', 'err');
     }
   } else {
     state.consLoss = 0;
@@ -1346,12 +1372,17 @@ function kellySize(cfg, state, total) {
   return Math.min(fixedSize, sz, safeTotal * 0.20);
 }
 
+// Bufor na spread/poslizg market-orderow na Revolut X - jedynym kosztem
+// liczonym wczesniej byl FEE (0.2%), a realny spread/poslizg market-orderow
+// mogl "zjadac" TP na altcoinach zanim transakcja faktycznie sie zamknie.
+const SPREAD_BUFFER = 0.0015;
+
 function calcDynamicLevels(price, atrD, cfg, pp) {
   const atrPct   = atrD / price;
   const cfgTp    = (pp && pp.tp != null) ? pp.tp : cfg.tp;
   const cfgSl    = (pp && pp.sl != null) ? pp.sl : cfg.sl;
-  const tpOffset = Math.max(cfgTp,   atrPct * 2.5);
-  const slOffset = Math.max(cfgSl,   atrPct * 1.5);
+  const tpOffset = Math.max(cfgTp,   atrPct * 2.5) + SPREAD_BUFFER;
+  const slOffset = Math.max(cfgSl,   atrPct * 1.5) + SPREAD_BUFFER;
   const trail    = Math.max(cfg.trail, atrPct * 1.2);
   const tp    = price * (1 + tpOffset);
   const sl    = price * (1 - slOffset);
@@ -1450,7 +1481,24 @@ function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
 
   const gbmAcc = gbm.accuracyOOS > 0 ? gbm.accuracyOOS / 100 : 0.5;
   newEw.gbm = +Math.max(0.3, Math.min(1.5, gbmAcc * 2)).toFixed(2);
-  newEw.score = 1.0;
+
+  // Komponent "score" byl wczesniej na trwale zablokowany na wadze 1.0, mimo
+  // ze to suma ~15 recznie dobranych punktow bez zadnej walidacji skutecznosci
+  // (w przeciwienstwie do NB/GBM, ktore mialy tracked accuracy). Teraz liczymy
+  // jego wlasna trafnosc: score >= 60 traktujemy jako "component-BUY" i
+  // sprawdzamy zgodnosc z wynikiem transakcji, analogicznie do NB powyzej.
+  const SCORE_BUY_THRESHOLD = 60;
+  let scoreCorrect = 0, scoreTotal = 0;
+  recentTrades.forEach(t => {
+    if (typeof t.score !== 'number') return;
+    scoreTotal++;
+    if ((t.score >= SCORE_BUY_THRESHOLD && t.pnl > 0) || (t.score < SCORE_BUY_THRESHOLD && t.pnl <= 0)) scoreCorrect++;
+  });
+  if (scoreTotal >= 5) {
+    const scoreAcc = scoreCorrect / scoreTotal;
+    newEw.score = +Math.max(0.3, Math.min(1.5, scoreAcc * 2)).toFixed(2);
+  }
+
   newEw.obi = 0.3;
   return newEw;
 }
@@ -2062,7 +2110,7 @@ function defaultConfig() {
     // jest odpowiednio mniejszy. Wartości startowe, do kalibracji na realnych danych.
     tp: 0.02, sl: 0.01, trail: 0.008,
     maxPos: 4, posSize: 15, riskPct: 2,
-    paperBalance: 1000, minScore: 58, fgMin: 20,
+    paperBalance: 1000, minScore: 62, fgMin: 20,
     revxApiKey: '', revxPrivKey: '',
     tgToken: '', tgChat: ''
   };
@@ -2077,7 +2125,7 @@ function defaultState() {
     lastCycle: null, lastFG: { val: 50, label: 'Neutral', ts: 0 },
     lastSigs: [],
     nb: null, gbm: null, ql: null, ensembleW: null,
-    pairParams: {}, adaptiveMinScore: 58,
+    pairParams: {}, adaptiveMinScore: 62,
     peakBalance: 0, peakBalanceMode: 'paper',
     drawdownBlock: 0, stats: null,
     lastGbmRefit: 0
