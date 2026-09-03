@@ -891,7 +891,7 @@ let CFG = {
   // Day trading: dużo ciaśniejsze poziomy niż swing (tam 12%/5%/6%) - pozycje
   // trzymane w ramach jednej sesji, nie tygodni. Ta sama poprawka co w worker.js.
   tp:0.02, sl:0.01, trail:0.008, maxPos:4, riskPct:2, posSize:15,
-  intervalMin:3, paperBal:1000, minScore:58, fgMin:20,
+  intervalMin:3, paperBal:1000, minScore:62, fgMin:20,
   tgToken:'', tgChat:'', soundAlerts:true
 };
 // Day trading: mniej par niz swing (bylo 8), bo czestszy skan (co 3 min) wymaga
@@ -1059,8 +1059,14 @@ function isMicroAccount(total) { return (isFinite(total) && total > 0 && total <
 
 // ── PUMP & DUMP FILTER ─────────────────────────────────────────────
 function isPumpDump(sig) {
+  // Progi 4.0x/15% byly skopiowane ze starej wersji swingowej (mom5 liczony na
+  // oknach 4H/5-dniowych) - tutaj (day trading, mom5/mom10 na swiecach 1H) to
+  // ruch z ostatnich 5h/10h, wiec ta sama liczba % oznacza dramatycznie
+  // bardziej ekstremalny ruch. Bez przeskalowania filtr byl w praktyce martwy.
+  // Ta sama poprawka co w worker.js.
   if (sig.vol4R > 4.0) { log('⚠️ PUMP '+sig.sym+' vol4R='+sig.vol4R+'x','warn'); return true; }
-  if (sig.mom5  > 15)  { log('⚠️ Szybki wzrost '+sig.sym+' +'+sig.mom5+'% 5d','warn'); return true; }
+  if (sig.mom5  > 8)   { log('⚠️ Szybki wzrost '+sig.sym+' +'+sig.mom5+'%/5h','warn'); return true; }
+  if (sig.mom10 > 12)  { log('⚠️ Szybki wzrost '+sig.sym+' +'+sig.mom10+'%/10h','warn'); return true; }
   return false;
 }
 
@@ -1480,36 +1486,22 @@ async function execBuy(sym, quoteQty) {
     if (!p || p <= 0) throw new Error('execBuy: niepoprawna cena '+sym);
     ST.paperBal -= quoteQty; return {price:p, qty:quoteQty/p};
   }
-  const tok = CFG.authToken || 'swingai-revolut-2024';
-  const rvxSym = sym.includes('/') ? sym : sym.replace('_','/');;
-  const r = await fetchWithTimeout(CFG.workerUrl + '/order?auth=' + encodeURIComponent(tok), 15000, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({instrument_code: rvxSym, side:'BUY', type:'MARKET', amount: quoteQty.toFixed(2)})
-  });
-  if (!r.ok) { const e = await r.text(); throw new Error('execBuy Revolut X: ' + e); }
-  const d = await r.json();
-  const fillPrice = +(d.price || d.avg_price || 0);
-  if(!fillPrice || fillPrice <= 0) throw new Error('execBuy: Revolut X nie zwrocil ceny wypelnienia dla '+sym);
-  const fillQty = +(d.qty || d.filled_quantity || quoteQty / fillPrice);
-  return {price:fillPrice, qty:fillQty};
+  // worker.js nie ma endpointu /order (tylko /balance, /market, /status, /run itd.) -
+  // ten fetch dostawalby 200 OK z tekstem "SwingAI Revolut X Worker — OK", .json()
+  // rzucalby SyntaxError, a openTrade() lapal to jako niejednoznaczny blad i pokazywal
+  // falszywy alarm "zlecenie mogло zostac zlozone - sprawdz recznie", mimo ze NIC nie
+  // zostalo wyslane do Revolut X. LIVE ma dzialac przez Cloudflare Worker (cron), nie
+  // przez ten dashboard - odcinamy to jasnym bledem od razu, bez zbednego zapytania.
+  throw new Error('LIVE z przegladarki nie jest wdrozone (endpoint /order nie istnieje na Workerze) — zlecenie NIE zostalo wyslane. Realny handel LIVE dziala przez Cloudflare Worker.');
 }
 async function execSell(sym, qty) {
   if (CFG.mode === 'paper') {
     const t = await getTicker(sym); const p = +t.lastPrice;
     ST.paperBal += p * qty; return {price:p, qty};
   }
-  const tok2 = CFG.authToken || 'swingai-revolut-2024';
-  const rvxSym2 = sym.includes('/') ? sym : sym.replace('_','/');;
-  const r2 = await fetchWithTimeout(CFG.workerUrl + '/order?auth=' + encodeURIComponent(tok2), 15000, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({instrument_code: rvxSym2, side:'SELL', type:'MARKET', quantity: qty})
-  });
-  if (!r2.ok) { const e2 = await r2.text(); throw new Error('execSell Revolut X: ' + e2); }
-  const d2 = await r2.json();
-  const fillPrice2 = +(d2.price || d2.avg_price || 0);
-  if(!fillPrice2 || fillPrice2 <= 0) throw new Error('execSell: Revolut X nie zwrocil ceny wypelnienia dla '+sym);
-  const fillQty2 = +(d2.qty || d2.filled_quantity || qty);
-  return {price:fillPrice2, qty:fillQty2};
+  // Patrz komentarz w execBuy() - /order nie istnieje na Workerze, LIVE z przegladarki
+  // odcinamy jasnym bledem od razu.
+  throw new Error('LIVE z przegladarki nie jest wdrozone (endpoint /order nie istnieje na Workerze) — zlecenie NIE zostalo wyslane. Realny handel LIVE dziala przez Cloudflare Worker.');
 }
 async function getTotal() {
   let t = CFG.mode==='paper' ? ST.paperBal : await getUSDC().catch(()=>0);
@@ -1827,7 +1819,10 @@ async function analyzeSwing(sym) {
 
   // Regime scoring
   var regimeMinScoreAdj = 0;
-  if (regime === 'sideways')   { regimeMinScoreAdj = 8; }
+  // +8 bylo za slabym filtrem wobec sumy mozliwych bonusow (np. +20 dywergencja
+  // + +15 BOS + +12 trend latwo przebijaly prog nawet w chopie). Ta sama
+  // poprawka co w worker.js.
+  if (regime === 'sideways')   { regimeMinScoreAdj = 18; }
   if (regime === 'bull_trend') { score += 5; why.push('Rezim: bull trend'); }
   if (regime === 'bear_trend') { score -= 15; why.push('Rezim: bear trend'); }
   if (regime === 'volatile')   { score -= 8;  why.push('Rezim: volatile'); }
@@ -1905,7 +1900,24 @@ async function analyzeSwing(sym) {
   // ── Module 6: Per-pair effective minScore ────────────────────────
   const pairP = PAIR_PARAMS.get(sym);
   const effectiveMinScore = (pairP ? pairP.minScore : ADAPTIVE.getMinScore()) + regimeMinScoreAdj;
-  const buy = finalProb >= effectiveMinScore/100;
+
+  // Confluence gate: czysta suma punktowa (score) potrafi przekroczyc prog na
+  // szumie kilku niezaleznych bonusow. Wymagamy zgodnosci min. 2 z 4 niezaleznych
+  // rodzin sygnalow (trend, momentum/RSI, struktura SMC, wolumen). Ta sama
+  // poprawka co w worker.js.
+  const confluence = [
+    trendD >= 1,
+    (rsiD <= 40 || bbD.pos < 0.20 || divD.bull || div4h.bull),
+    (structure.event === 'BOS_up' || structure.event === 'CHoCH_up' || nearBullOB || (liqSweep && liqSweep.type === 'bullish')),
+    (volR > 1.3 || vol4R > 1.3)
+  ].filter(Boolean).length;
+  if (finalProb >= effectiveMinScore/100 && confluence < 2) {
+    why.push('Score OK, ale brak confluence ('+confluence+'/4 rodzin sygnalow) — wejscie odrzucone');
+  }
+
+  // bearBias byl wczesniej tylko odpisem punktowym (-30) - latwym do przebicia
+  // innymi bonusami. Teraz to twarda blokada wejscia. Ta sama poprawka co w worker.js.
+  const buy = finalProb >= effectiveMinScore/100 && confluence >= 2 && !bearBias;
 
   // ── Poziomy TP/SL/R:R (dynamiczne, ATR, per-para override) + sygnal SHORT informacyjny ─
   const levels = calcDynamicLevels(price, atrD, FEE, pairP);
@@ -2328,8 +2340,12 @@ function calcDynamicLevels(price, atrVal, fee, pp) {
   var cfgSl = (pp && pp.sl != null) ? pp.sl/100 : CFG.sl;
   var atr14 = atrVal || price * cfgSl; // fallback na % jesli brak ATR
   if (!atr14 || atr14 <= 0) atr14 = price * cfgSl;
-  var tpDist = Math.max(price * cfgTp,  2.5 * atr14);
-  var slDist = Math.max(price * cfgSl,  1.5 * atr14);
+  // Bufor na spread/poslizg market-orderow (0.15%) - wczesniej jedynym liczonym
+  // kosztem byl FEE, a realny spread/poslizg mogl "zjadac" TP zanim transakcja
+  // faktycznie sie zamknie. Ta sama poprawka co w worker.js.
+  var spreadBuf = price * 0.0015;
+  var tpDist = Math.max(price * cfgTp,  2.5 * atr14) + spreadBuf;
+  var slDist = Math.max(price * cfgSl,  1.5 * atr14) + spreadBuf;
   slDist = Math.max(slDist, price * 0.001); // min 0.1% aby uniknąć dzielenia przez 0
   // Upewnij sie ze R:R >= 1.5:1
   if (tpDist / slDist < 1.5) tpDist = slDist * 1.8;
@@ -2540,8 +2556,8 @@ async function closeTrade(pos, price, reason) {
       ST.consLoss++;
       // Day trading: 45 min / 1h zamiast 12h / 3h (swing) - ta sama poprawka co
       // dzis w worker.js. Stare wartosci efektywnie blokowalyby handel do jutra.
-      ST.cooldown[pos.sym] = Date.now() + 45*60000;
-      if (ST.consLoss >= 4) { ST.globalBlockUntil=Date.now()+60*60000; log('4 straty z rzedu — blokada 1h','err'); toast('Blokada 1h — 4 straty z rzędu','Ochłodź się, sprawdź rynek','warn',8000); }
+      ST.cooldown[pos.sym] = Date.now() + 60*60000;
+      if (ST.consLoss >= 3) { ST.globalBlockUntil=Date.now()+90*60000; log('3 straty z rzedu — blokada 90 min','err'); toast('Blokada 90 min — 3 straty z rzędu','Ochłodź się, sprawdź rynek','warn',8000); }
     } else { ST.consLoss=0; }
     ST.trades.unshift({sym:pos.sym, entry:pos.entry, exit:ep, qty:pos.qty,
       pnl:+pnl.toFixed(4), pnlPct:+pnlPct.toFixed(2), durH, reason, score:pos.score,
@@ -2673,7 +2689,7 @@ async function openTrade(sig, fg, btcDrop, cachedTotal, cachedUSDC) {
       'Score: '+sig.score+'/100 | P(wzrost): '+(sig.finalProb*100||sig.score).toFixed(0)+'%');
   } catch(e) {
     if (CFG.mode === 'live') {
-      showToast('UWAGA: Zlecenie BUY mogło zostać złożone na Revolut X, ale odpowiedź była niekompletna. Sprawdź ręcznie pozycje na giełdzie! Błąd: ' + e.message, 'err', 10000);
+      showToast('LIVE BUY ' + sig.sym + ' NIE zostalo zlozone: ' + e.message, 'err', 10000);
     }
     log('BUY '+sig.sym+': '+e.message,'err');
   }
@@ -3311,7 +3327,7 @@ function openSettings() {
   gi('cfg-size').value=CFG.posSize||15;
   gi('cfg-interval').value=CFG.intervalMin||3;
   gi('cfg-paper-bal').value=CFG.paperBal||1000;
-  gi('cfg-minscore').value=CFG.minScore||58;
+  gi('cfg-minscore').value=CFG.minScore||62;
   gi('cfg-risk').value=CFG.riskPct||2;
   gi('cfg-fgmin').value=CFG.fgMin||20;
   gi('cfg-tg-token').value=CFG.tgToken||'';
@@ -4353,7 +4369,7 @@ async function runBacktest() {
 
       if (sc >= minScore) {
         inPos = true;
-        entryPrice = closes[i+1] || closes[i]; // wejscie na open nastepnej swieci (aprox. close[i])
+        entryPrice = opens[i+1] || closes[i]; // wejscie na open nastepnej swieci (bylo blednie: close[i+1])
         entryDate  = dates[i+1] || dates[i];
         entryScore = sc;
         entryBar   = i + 1;
