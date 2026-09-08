@@ -1,4 +1,4 @@
-﻿﻿<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pl">
 <head>
 <meta charset="UTF-8">
@@ -16,8 +16,8 @@
   --bg5:#252525;
   --glass:rgba(15,15,15,0.85);
   --text:#f5f5f5;
-  --text2:#999999;
-  --text3:#555555;
+  --text2:#c2c2c8;
+  --text3:#9a9aa2;
   --accent:#FF5F00;
   --accent2:#E05000;
   --gold:#f0b429;
@@ -332,6 +332,100 @@ tr:hover td{background:rgba(123,97,255,.04);}
 </head>
 <body>
 
+<!-- PIN GATE OVERLAY — index.html jest plikiem statycznym na GitHub Pages (Worker
+     go nie serwuje/nie przechwytuje), wiec ochrona PIN-em musi zyc tutaj, w JS.
+     Domyslnie widoczny (blokuje caly widok); chowany przez pinGateCheckSession()
+     po potwierdzeniu sesji (cookie ustawiane przez Worker po /verify-pin). -->
+<div id="pin-overlay" style="position:fixed;inset:0;background:#020810;z-index:99999;display:flex;align-items:center;justify-content:center;">
+  <div style="background:#0b1526;padding:32px 28px;border-radius:14px;box-shadow:0 0 40px rgba(0,0,0,.5);text-align:center;width:280px">
+    <h1 style="font-size:1.1em;margin:0 0 18px;color:#00e5a0">SwingAI Bot — Revolut X</h1>
+    <form id="pinGateForm" autocomplete="off">
+      <input id="pinGateInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="••••••••" autofocus
+        style="width:100%;box-sizing:border-box;font-size:1.6em;letter-spacing:6px;text-align:center;padding:10px;border-radius:8px;border:1px solid #223;background:#050c18;color:#fff;margin-bottom:14px">
+      <button type="submit" style="width:100%;padding:10px;border-radius:8px;border:none;background:#00e5a0;color:#020810;font-weight:700;font-size:1em;cursor:pointer">Wejdź</button>
+    </form>
+    <div id="pinGateErr" style="color:#ff3d5a;font-size:.85em;margin-top:10px;min-height:1.2em"></div>
+  </div>
+</div>
+<script>
+(function() {
+  var PIN_BOT_BASE = 'https://swingai-revolut.tomek-falek.workers.dev';
+  function showOverlay() { var o = document.getElementById('pin-overlay'); if (o) o.style.display = 'flex'; }
+  function hideOverlay() { var o = document.getElementById('pin-overlay'); if (o) o.style.display = 'none'; }
+  function checkSession() {
+    fetch(PIN_BOT_BASE + '/session-check', { credentials: 'include' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if (d && d.ok) hideOverlay(); else showOverlay(); })
+      .catch(function(){ showOverlay(); });
+  }
+  document.addEventListener('DOMContentLoaded', function() {
+    checkSession();
+    var form = document.getElementById('pinGateForm');
+    var input = document.getElementById('pinGateInput');
+    var err = document.getElementById('pinGateErr');
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      var pin = input.value.trim();
+      if (pin.length !== 8) { err.textContent = 'PIN musi mieć 8 cyfr'; return; }
+      err.textContent = '';
+      var btn = form.querySelector('button');
+      btn.disabled = true;
+      fetch(PIN_BOT_BASE + '/verify-pin', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pin })
+      })
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+          if (d && d.ok) { hideOverlay(); }
+          else { err.textContent = (d && d.error) || 'Błąd'; input.value = ''; btn.disabled = false; }
+        })
+        .catch(function() { err.textContent = 'Błąd połączenia'; btn.disabled = false; });
+    });
+  });
+  window._pinGateBase = PIN_BOT_BASE;
+
+  window.changeBotPin = function() {
+    var oldEl = document.getElementById('cfg-pin-old');
+    var newEl = document.getElementById('cfg-pin-new');
+    var statusEl = document.getElementById('pin-change-status');
+    var oldPin = oldEl ? oldEl.value.trim() : '';
+    var newPin = newEl ? newEl.value.trim() : '';
+    if (!/^\d{8}$/.test(oldPin)) { if (statusEl) { statusEl.textContent = 'Podaj aktualny PIN (8 cyfr)'; statusEl.style.color = 'var(--red)'; } return; }
+    if (!/^\d{8}$/.test(newPin)) { if (statusEl) { statusEl.textContent = 'Nowy PIN musi mieć 8 cyfr'; statusEl.style.color = 'var(--red)'; } return; }
+    if (statusEl) { statusEl.textContent = 'Zapisywanie...'; statusEl.style.color = 'var(--text2)'; }
+    fetch(PIN_BOT_BASE + '/change-pin', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oldPin: oldPin, newPin: newPin })
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (d && d.ok) {
+          if (statusEl) { statusEl.textContent = 'PIN zmieniony'; statusEl.style.color = 'var(--green)'; }
+          if (oldEl) oldEl.value = ''; if (newEl) newEl.value = '';
+        } else if (statusEl) { statusEl.textContent = (d && d.error) || 'Błąd zmiany PIN'; statusEl.style.color = 'var(--red)'; }
+      })
+      .catch(function(e) { if (statusEl) { statusEl.textContent = 'Błąd połączenia: ' + e.message; statusEl.style.color = 'var(--red)'; } });
+  };
+
+  window.clearBotStats = function() {
+    if (!confirm('Usunąć historię tradów i wytrenowane modele AI (NB/GBM/QL)? Otwarte pozycje i ustawienia zostaną bez zmian. Operacja nieodwracalna.')) return;
+    var statusEl = document.getElementById('clear-stats-status');
+    if (statusEl) { statusEl.textContent = 'Czyszczenie...'; statusEl.style.color = 'var(--text2)'; }
+    fetch(PIN_BOT_BASE + '/clear-stats', { method: 'POST', credentials: 'include' })
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (d && d.ok) {
+          if (statusEl) { statusEl.textContent = 'Statystyki i modele AI wyczyszczone'; statusEl.style.color = 'var(--green)'; }
+          try { if (typeof renderStats === 'function') renderStats(); if (typeof renderHistory === 'function') renderHistory(); } catch(e) {}
+        } else if (statusEl) { statusEl.textContent = (d && d.error) || 'Błąd czyszczenia'; statusEl.style.color = 'var(--red)'; }
+      })
+      .catch(function(e) { if (statusEl) { statusEl.textContent = 'Błąd połączenia: ' + e.message; statusEl.style.color = 'var(--red)'; } });
+  };
+})();
+</script>
+
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
 
@@ -604,7 +698,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
           <div class="r2" style="margin-bottom:6px"><span class="lbl">Cel zysku %</span><input id="ml-target" type="number" value="1.5" min="0.5" max="5" step="0.1" style="width:80px"> <small class="lbl">wzrost ceny w ciągu 12 świec (1H)</small></div>
           <button class="go" onclick="runMLOptimize()" id="ml-btn" style="width:100%;padding:7px;background:rgba(188,140,255,.15);color:var(--purple);border-color:var(--purple)">🧠 Trenuj model</button>
           <button onclick="applyMLWeights()" id="ml-apply" style="width:100%;padding:5px;margin-top:6px;display:none" class="ok-btn">✅ Zastosuj wagi w bocie</button>
-          <button onclick="trainAllAI()" style="width:100%;padding:5px;margin-top:6px;background:rgba(63,185,80,.1);color:var(--green);border-color:var(--green)">&#128260; Trenuj NB + GBM na Gate.io</button>
+          <button onclick="trainAllAI()" style="width:100%;padding:5px;margin-top:6px;background:rgba(63,185,80,.1);color:var(--green);border-color:var(--green)">&#128260; Trenuj NB + GBM na Revolut X</button>
           <div id="ml-progress" style="margin-top:8px;font-size:8.5pt;color:var(--gold);min-height:18px"></div>
         </div>
         <div>
@@ -730,6 +824,16 @@ tr:hover td{background:rgba(123,97,255,.04);}
   <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">&#128241; Telegram (opcjonalne)</div>
   <div class="form-row"><label>Bot Token</label><input id="cfg-tg-token" type="password" placeholder="123456:ABC-DEF..."></div>
   <div class="form-row"><label>Chat ID</label><input id="cfg-tg-chat" type="text" placeholder="-100123456"></div>
+  <hr style="border-color:var(--border);margin:12px 0;">
+  <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">🔒 <b>PIN dostępu do panelu</b></div>
+  <div class="form-row"><label>Aktualny PIN</label><input id="cfg-pin-old" type="password" inputmode="numeric" maxlength="8" placeholder="8 cyfr"></div>
+  <div class="form-row"><label>Nowy PIN</label><input id="cfg-pin-new" type="password" inputmode="numeric" maxlength="8" placeholder="8 cyfr"></div>
+  <div class="modal-btns"><button onclick="changeBotPin()">🔑 Zmień PIN</button></div>
+  <div id="pin-change-status" style="font-size:8.5pt;min-height:16px;margin-bottom:4px"></div>
+  <hr style="border-color:var(--border);margin:12px 0;">
+  <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">📊 <b>Statystyki i modele AI</b></div>
+  <div class="modal-btns"><button class="stop-btn" onclick="clearBotStats()">🗑️ Wyczyść statystyki (reset AI)</button></div>
+  <div id="clear-stats-status" style="font-size:8.5pt;min-height:16px;margin-bottom:4px"></div>
   <div class="modal-btns"><button class="go" onclick="saveSettings()">&#128190; Zapisz</button><button onclick="testConn()">&#128299; Test</button><button class="stop-btn" onclick="deleteApiKeys()">&#128273; Usuń klucze</button><button class="stop-btn" onclick="resetAll()">&#128465; Reset</button><button onclick="closeOverlay('modal-cfg')" style="margin-left:auto">Zamknij</button></div>
   <div id="cfg-status" style="margin-top:8px;font-size:9pt;min-height:18px;color:var(--text2)"></div>
 </div></div>
@@ -787,7 +891,7 @@ let CFG = {
   // Day trading: dużo ciaśniejsze poziomy niż swing (tam 12%/5%/6%) - pozycje
   // trzymane w ramach jednej sesji, nie tygodni. Ta sama poprawka co w worker.js.
   tp:0.02, sl:0.01, trail:0.008, maxPos:4, riskPct:2, posSize:15,
-  intervalMin:3, paperBal:1000, minScore:58, fgMin:20,
+  intervalMin:3, paperBal:1000, minScore:62, fgMin:20,
   tgToken:'', tgChat:'', soundAlerts:true
 };
 // Day trading: mniej par niz swing (bylo 8), bo czestszy skan (co 3 min) wymaga
@@ -955,8 +1059,14 @@ function isMicroAccount(total) { return (isFinite(total) && total > 0 && total <
 
 // ── PUMP & DUMP FILTER ─────────────────────────────────────────────
 function isPumpDump(sig) {
+  // Progi 4.0x/15% byly skopiowane ze starej wersji swingowej (mom5 liczony na
+  // oknach 4H/5-dniowych) - tutaj (day trading, mom5/mom10 na swiecach 1H) to
+  // ruch z ostatnich 5h/10h, wiec ta sama liczba % oznacza dramatycznie
+  // bardziej ekstremalny ruch. Bez przeskalowania filtr byl w praktyce martwy.
+  // Ta sama poprawka co w worker.js.
   if (sig.vol4R > 4.0) { log('⚠️ PUMP '+sig.sym+' vol4R='+sig.vol4R+'x','warn'); return true; }
-  if (sig.mom5  > 15)  { log('⚠️ Szybki wzrost '+sig.sym+' +'+sig.mom5+'% 5d','warn'); return true; }
+  if (sig.mom5  > 8)   { log('⚠️ Szybki wzrost '+sig.sym+' +'+sig.mom5+'%/5h','warn'); return true; }
+  if (sig.mom10 > 12)  { log('⚠️ Szybki wzrost '+sig.sym+' +'+sig.mom10+'%/10h','warn'); return true; }
   return false;
 }
 
@@ -1337,28 +1447,25 @@ async function pub(path, params={}) {
 }
 async function getKlines(sym,tf,limit){
   limit=limit||200;
-  const kMap={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
-  const kSym=kMap[sym]||(sym.replace('_',''));
-  const tfMap={'1d':'1440','4h':'240','1h':'60','15m':'15','5m':'5'};const kTf=tfMap[tf]||'5';
-  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/0/public/OHLC')+'&qs='+encodeURIComponent('pair='+kSym+'&interval='+kTf);
+  // Revolut X format: "BTC/USDC" - to zamiana podkreslnika na slash, 1:1 z
+  // revxInstrument() w workerze. Interval Revolut X = minuty, tak jak tfMap nizej.
+  const rSym=sym.replace('_','/');
+  const tfMap={'1d':'1440','4h':'240','1h':'60','15m':'15','5m':'5'};const rTf=tfMap[tf]||'5';
+  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/1.0/public/candles/'+rSym)+'&qs='+encodeURIComponent('interval='+rTf);
   const r=await fetchWithTimeout(url,15000);const d=await r.json();
-  if(d.error&&d.error.length) throw new Error('Kraken OHLC: '+d.error[0]);
-  const key=Object.keys(d.result||{}).find(function(k){return k!=='last';});
-  const rows=key?d.result[key]:[];
-  return rows.slice(-limit).map(function(k){return [+k[0]*1000,+k[1],+k[2],+k[3],+k[4],+k[6]];});
+  const rows=Array.isArray(d.data)?d.data:[];
+  return rows.slice(-limit).map(function(k){return [+k.start,+k.open,+k.high,+k.low,+k.close,+k.volume];});
 }
 async function getTicker(sym){
-  const kMap={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
-  const kSym=kMap[sym]||(sym.replace('_',''));
-  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/0/public/Ticker')+'&qs='+encodeURIComponent('pair='+kSym);
+  const rSym=sym.replace('_','/');
+  const url=(CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/1.0/public/tickers')+'&qs='+encodeURIComponent('symbols='+rSym);
   const r=await fetchWithTimeout(url,10000);
   if(!r.ok) throw new Error('getTicker HTTP '+r.status+' '+sym);
   const d=await r.json();
-  if(d.error&&d.error.length) throw new Error('getTicker Kraken: '+d.error[0]);
-  const key=Object.keys(d.result||{})[0];const t=key?d.result[key]:null;
+  const t=(d.data||[]).find(function(x){return x.symbol===rSym;});
   if(!t) throw new Error('getTicker: brak danych '+sym);
-  const last=t.c[0];const open=t.o;
-  const changePct=open&&+open>0?((+last-+open)/+open*100).toFixed(2):'0';
+  const last=t.last_price;const chg24h=+t.price_change_24h;const open=last-chg24h;
+  const changePct=open&&open>0?(chg24h/open*100).toFixed(2):'0';
   return {lastPrice:last,priceChangePercent:changePct};
 }
 
@@ -1379,36 +1486,22 @@ async function execBuy(sym, quoteQty) {
     if (!p || p <= 0) throw new Error('execBuy: niepoprawna cena '+sym);
     ST.paperBal -= quoteQty; return {price:p, qty:quoteQty/p};
   }
-  const tok = CFG.authToken || 'swingai-revolut-2024';
-  const rvxSym = sym.includes('/') ? sym : sym.replace('_','/');;
-  const r = await fetchWithTimeout(CFG.workerUrl + '/order?auth=' + encodeURIComponent(tok), 15000, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({instrument_code: rvxSym, side:'BUY', type:'MARKET', amount: quoteQty.toFixed(2)})
-  });
-  if (!r.ok) { const e = await r.text(); throw new Error('execBuy Revolut X: ' + e); }
-  const d = await r.json();
-  const fillPrice = +(d.price || d.avg_price || 0);
-  if(!fillPrice || fillPrice <= 0) throw new Error('execBuy: Revolut X nie zwrocil ceny wypelnienia dla '+sym);
-  const fillQty = +(d.qty || d.filled_quantity || quoteQty / fillPrice);
-  return {price:fillPrice, qty:fillQty};
+  // worker.js nie ma endpointu /order (tylko /balance, /market, /status, /run itd.) -
+  // ten fetch dostawalby 200 OK z tekstem "SwingAI Revolut X Worker — OK", .json()
+  // rzucalby SyntaxError, a openTrade() lapal to jako niejednoznaczny blad i pokazywal
+  // falszywy alarm "zlecenie mogло zostac zlozone - sprawdz recznie", mimo ze NIC nie
+  // zostalo wyslane do Revolut X. LIVE ma dzialac przez Cloudflare Worker (cron), nie
+  // przez ten dashboard - odcinamy to jasnym bledem od razu, bez zbednego zapytania.
+  throw new Error('LIVE z przegladarki nie jest wdrozone (endpoint /order nie istnieje na Workerze) — zlecenie NIE zostalo wyslane. Realny handel LIVE dziala przez Cloudflare Worker.');
 }
 async function execSell(sym, qty) {
   if (CFG.mode === 'paper') {
     const t = await getTicker(sym); const p = +t.lastPrice;
     ST.paperBal += p * qty; return {price:p, qty};
   }
-  const tok2 = CFG.authToken || 'swingai-revolut-2024';
-  const rvxSym2 = sym.includes('/') ? sym : sym.replace('_','/');;
-  const r2 = await fetchWithTimeout(CFG.workerUrl + '/order?auth=' + encodeURIComponent(tok2), 15000, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({instrument_code: rvxSym2, side:'SELL', type:'MARKET', quantity: qty})
-  });
-  if (!r2.ok) { const e2 = await r2.text(); throw new Error('execSell Revolut X: ' + e2); }
-  const d2 = await r2.json();
-  const fillPrice2 = +(d2.price || d2.avg_price || 0);
-  if(!fillPrice2 || fillPrice2 <= 0) throw new Error('execSell: Revolut X nie zwrocil ceny wypelnienia dla '+sym);
-  const fillQty2 = +(d2.qty || d2.filled_quantity || qty);
-  return {price:fillPrice2, qty:fillQty2};
+  // Patrz komentarz w execBuy() - /order nie istnieje na Workerze, LIVE z przegladarki
+  // odcinamy jasnym bledem od razu.
+  throw new Error('LIVE z przegladarki nie jest wdrozone (endpoint /order nie istnieje na Workerze) — zlecenie NIE zostalo wyslane. Realny handel LIVE dziala przez Cloudflare Worker.');
 }
 async function getTotal() {
   let t = CFG.mode==='paper' ? ST.paperBal : await getUSDC().catch(()=>0);
@@ -1726,7 +1819,10 @@ async function analyzeSwing(sym) {
 
   // Regime scoring
   var regimeMinScoreAdj = 0;
-  if (regime === 'sideways')   { regimeMinScoreAdj = 8; }
+  // +8 bylo za slabym filtrem wobec sumy mozliwych bonusow (np. +20 dywergencja
+  // + +15 BOS + +12 trend latwo przebijaly prog nawet w chopie). Ta sama
+  // poprawka co w worker.js.
+  if (regime === 'sideways')   { regimeMinScoreAdj = 18; }
   if (regime === 'bull_trend') { score += 5; why.push('Rezim: bull trend'); }
   if (regime === 'bear_trend') { score -= 15; why.push('Rezim: bear trend'); }
   if (regime === 'volatile')   { score -= 8;  why.push('Rezim: volatile'); }
@@ -1804,7 +1900,24 @@ async function analyzeSwing(sym) {
   // ── Module 6: Per-pair effective minScore ────────────────────────
   const pairP = PAIR_PARAMS.get(sym);
   const effectiveMinScore = (pairP ? pairP.minScore : ADAPTIVE.getMinScore()) + regimeMinScoreAdj;
-  const buy = finalProb >= effectiveMinScore/100;
+
+  // Confluence gate: czysta suma punktowa (score) potrafi przekroczyc prog na
+  // szumie kilku niezaleznych bonusow. Wymagamy zgodnosci min. 2 z 4 niezaleznych
+  // rodzin sygnalow (trend, momentum/RSI, struktura SMC, wolumen). Ta sama
+  // poprawka co w worker.js.
+  const confluence = [
+    trendD >= 1,
+    (rsiD <= 40 || bbD.pos < 0.20 || divD.bull || div4h.bull),
+    (structure.event === 'BOS_up' || structure.event === 'CHoCH_up' || nearBullOB || (liqSweep && liqSweep.type === 'bullish')),
+    (volR > 1.3 || vol4R > 1.3)
+  ].filter(Boolean).length;
+  if (finalProb >= effectiveMinScore/100 && confluence < 2) {
+    why.push('Score OK, ale brak confluence ('+confluence+'/4 rodzin sygnalow) — wejscie odrzucone');
+  }
+
+  // bearBias byl wczesniej tylko odpisem punktowym (-30) - latwym do przebicia
+  // innymi bonusami. Teraz to twarda blokada wejscia. Ta sama poprawka co w worker.js.
+  const buy = finalProb >= effectiveMinScore/100 && confluence >= 2 && !bearBias;
 
   // ── Poziomy TP/SL/R:R (dynamiczne, ATR, per-para override) + sygnal SHORT informacyjny ─
   const levels = calcDynamicLevels(price, atrD, FEE, pairP);
@@ -2227,8 +2340,12 @@ function calcDynamicLevels(price, atrVal, fee, pp) {
   var cfgSl = (pp && pp.sl != null) ? pp.sl/100 : CFG.sl;
   var atr14 = atrVal || price * cfgSl; // fallback na % jesli brak ATR
   if (!atr14 || atr14 <= 0) atr14 = price * cfgSl;
-  var tpDist = Math.max(price * cfgTp,  2.5 * atr14);
-  var slDist = Math.max(price * cfgSl,  1.5 * atr14);
+  // Bufor na spread/poslizg market-orderow (0.15%) - wczesniej jedynym liczonym
+  // kosztem byl FEE, a realny spread/poslizg mogl "zjadac" TP zanim transakcja
+  // faktycznie sie zamknie. Ta sama poprawka co w worker.js.
+  var spreadBuf = price * 0.0015;
+  var tpDist = Math.max(price * cfgTp,  2.5 * atr14) + spreadBuf;
+  var slDist = Math.max(price * cfgSl,  1.5 * atr14) + spreadBuf;
   slDist = Math.max(slDist, price * 0.001); // min 0.1% aby uniknąć dzielenia przez 0
   // Upewnij sie ze R:R >= 1.5:1
   if (tpDist / slDist < 1.5) tpDist = slDist * 1.8;
@@ -2391,7 +2508,7 @@ function _beep(freqs, durMs, type) {
       osc.frequency.value = f;
       var start = t0 + i * (durMs/1000);
       gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.22, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.55, start + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, start + durMs/1000);
       osc.connect(gain); gain.connect(ctx.destination);
       osc.start(start); osc.stop(start + durMs/1000 + 0.02);
@@ -2439,8 +2556,8 @@ async function closeTrade(pos, price, reason) {
       ST.consLoss++;
       // Day trading: 45 min / 1h zamiast 12h / 3h (swing) - ta sama poprawka co
       // dzis w worker.js. Stare wartosci efektywnie blokowalyby handel do jutra.
-      ST.cooldown[pos.sym] = Date.now() + 45*60000;
-      if (ST.consLoss >= 4) { ST.globalBlockUntil=Date.now()+60*60000; log('4 straty z rzedu — blokada 1h','err'); toast('Blokada 1h — 4 straty z rzędu','Ochłodź się, sprawdź rynek','warn',8000); }
+      ST.cooldown[pos.sym] = Date.now() + 60*60000;
+      if (ST.consLoss >= 3) { ST.globalBlockUntil=Date.now()+90*60000; log('3 straty z rzedu — blokada 90 min','err'); toast('Blokada 90 min — 3 straty z rzędu','Ochłodź się, sprawdź rynek','warn',8000); }
     } else { ST.consLoss=0; }
     ST.trades.unshift({sym:pos.sym, entry:pos.entry, exit:ep, qty:pos.qty,
       pnl:+pnl.toFixed(4), pnlPct:+pnlPct.toFixed(2), durH, reason, score:pos.score,
@@ -2572,7 +2689,7 @@ async function openTrade(sig, fg, btcDrop, cachedTotal, cachedUSDC) {
       'Score: '+sig.score+'/100 | P(wzrost): '+(sig.finalProb*100||sig.score).toFixed(0)+'%');
   } catch(e) {
     if (CFG.mode === 'live') {
-      showToast('UWAGA: Zlecenie BUY mogło zostać złożone na Revolut X, ale odpowiedź była niekompletna. Sprawdź ręcznie pozycje na giełdzie! Błąd: ' + e.message, 'err', 10000);
+      showToast('LIVE BUY ' + sig.sym + ' NIE zostalo zlozone: ' + e.message, 'err', 10000);
     }
     log('BUY '+sig.sym+': '+e.message,'err');
   }
@@ -2931,8 +3048,8 @@ function renderPositions() {
     return '<div class="pos-card '+(pnlPct>=0?'profit':'loss')+'">'
       +'<div class="pos-hdr">'
       +'<div class="score-ring" style="background:'+sc_bg+';box-shadow:'+sc_shadow+';color:#fff;border:none">'+sc+'</div>'
-      +'<div><div class="pos-sym">'+pos.sym.replace('USDC','')+'<small style="color:var(--text3);font-size:9pt;font-family:\'Inter\',sans-serif;font-weight:400">/USDC</small></div>'
-      +'<div style="font-size:7.5pt;color:var(--text3)">'+((pos.why||'').substring(0,60))+'</div></div>'
+      +'<div><div class="pos-sym">'+pos.sym.replace('USDC','')+'<small style="color:var(--text);font-size:9pt;font-family:\'Inter\',sans-serif;font-weight:600">/USDC</small></div>'
+      +'<div style="font-size:8.5pt;color:var(--text);font-weight:600">'+((pos.why||'').substring(0,80))+'</div></div>'
       +'<div style="margin-left:auto;text-align:right">'
       +'<div style="font-size:18pt;font-weight:900;font-family:\'JetBrains Mono\',monospace" class="'+(pnlPct>=0?'up':'dn')+'">'+(pnlPct>=0?'+':'')+pnlPct.toFixed(2)+'%</div>'
       +'<div style="font-size:9pt;font-family:\'JetBrains Mono\',monospace" class="'+(pnl>=0?'up':'dn')+'">'+(pnl>=0?'+':'')+'$'+pnl.toFixed(2)+'</div></div></div>'
@@ -2980,8 +3097,8 @@ function renderShortPositions() {
     return '<div class="pos-card '+(pnlPct>=0?'profit':'loss')+'" style="border-color:rgba(255,179,71,.35)">'
       +'<div class="pos-hdr">'
       +'<div class="score-ring" style="background:linear-gradient(135deg,#7a5000,#ffb347);color:#fff;border:none">'+(pos.score||0)+'</div>'
-      +'<div><div class="pos-sym">'+pos.sym.replace('USDC','')+'<small style="color:var(--text3);font-size:9pt;font-family:\'Inter\',sans-serif;font-weight:400">/USDC — SHORT (sym.)</small></div>'
-      +'<div style="font-size:7.5pt;color:var(--text3)">'+((pos.why||'').substring(0,60))+'</div></div>'
+      +'<div><div class="pos-sym">'+pos.sym.replace('USDC','')+'<small style="color:var(--text);font-size:9pt;font-family:\'Inter\',sans-serif;font-weight:600">/USDC — SHORT (sym.)</small></div>'
+      +'<div style="font-size:8.5pt;color:var(--text);font-weight:600">'+((pos.why||'').substring(0,80))+'</div></div>'
       +'<div style="margin-left:auto;text-align:right">'
       +'<div style="font-size:18pt;font-weight:900;font-family:\'JetBrains Mono\',monospace" class="'+(pnlPct>=0?'up':'dn')+'">'+(pnlPct>=0?'+':'')+pnlPct.toFixed(2)+'%</div>'
       +'<div style="font-size:9pt;font-family:\'JetBrains Mono\',monospace" class="'+(pnl>=0?'up':'dn')+'">'+(pnl>=0?'+':'')+'$'+pnl.toFixed(2)+'</div></div></div>'
@@ -3210,7 +3327,7 @@ function openSettings() {
   gi('cfg-size').value=CFG.posSize||15;
   gi('cfg-interval').value=CFG.intervalMin||3;
   gi('cfg-paper-bal').value=CFG.paperBal||1000;
-  gi('cfg-minscore').value=CFG.minScore||58;
+  gi('cfg-minscore').value=CFG.minScore||62;
   gi('cfg-risk').value=CFG.riskPct||2;
   gi('cfg-fgmin').value=CFG.fgMin||20;
   gi('cfg-tg-token').value=CFG.tgToken||'';
@@ -3321,7 +3438,7 @@ async function testConn() {
   const url=(gi('cfg-worker').value||'').trim().replace(/\/+/,'');
   const tok=(gi('cfg-auth-token').value||'swingai-revolut-2024').trim();
   const lines=[];
-  try{const pb=(url||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'');const r=await fetchWithTimeout(pb+'/market?path='+encodeURIComponent('/api/v4/spot/tickers')+'&qs='+encodeURIComponent('currency_pair=BTC_USDC'),{signal:AbortSignal.timeout(10000)});const d=await r.json();const btc=(Array.isArray(d)?d:[])[0];lines.push('Gate.io OK | BTC: $'+(btc?(+btc.last).toFixed(0):'?'));}catch(e){lines.push('Gate.io ERR: '+e.message);}
+  try{const pb=(url||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'');const r=await fetchWithTimeout(pb+'/market?path='+encodeURIComponent('/1.0/public/tickers')+'&qs='+encodeURIComponent('symbols=BTC/USDC'),{signal:AbortSignal.timeout(10000)});const d=await r.json();const btc=(d.data||[])[0];lines.push('Revolut X OK | BTC: $'+(btc?(+btc.last_price).toFixed(0):'?'));}catch(e){lines.push('Revolut X ERR: '+e.message);}
   if(url){try{const r=await fetchWithTimeout(url+'/status?auth='+encodeURIComponent(tok),{signal:AbortSignal.timeout(10000)});if(r.ok){const d=await r.json();lines.push('Worker OK | tryb: '+(d.config&&d.config.mode||'?')+' iter: '+(d.state&&d.state.iter||0));if(d.state&&d.state.liveBalance)lines.push('Saldo USDC: $'+d.state.liveBalance.toFixed(2));}else{lines.push('Worker HTTP '+r.status);}}catch(e){lines.push('Worker ERR: '+e.message);}}else{lines.push('Brak Worker URL');}
   s.innerHTML=lines.map(function(l){return (l.indexOf('OK')>=0)?'<span style="color:var(--green)">'+l+'</span>':'<span style="color:var(--red)">'+l+'</span>';}).join('<br>');
 }
@@ -3371,18 +3488,17 @@ var OBI = {
     try {
       var result;
       {
-        // Kraken orderbook
-        var kMap2={'BTC_USDC':'XBTUSDT','ETH_USDC':'ETHUSDT','SOL_USDC':'SOLUSDT','XRP_USDC':'XRPUSDT','DOGE_USDC':'XDGUSDT','ADA_USDC':'ADAUSDT','AVAX_USDC':'AVAXUSDT','LINK_USDC':'LINKUSDT'};
-        var kSym2=kMap2[sym]||(sym.replace('_',''));
-        var d=await fetchWithTimeout((CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/0/public/Depth')+'&qs='+encodeURIComponent('pair='+kSym2+'&count=20'),10000);
+        // Revolut X orderbook - obiekty {price,quantity,count}, nie tablice [price,vol] jak Kraken
+        var rSym2=sym.replace('_','/');
+        var d=await fetchWithTimeout((CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/market?path='+encodeURIComponent('/2.0/public/order-book/'+rSym2)+'&qs='+encodeURIComponent('limit=20'),10000);
         var dj = await d.json();
-        var key2=Object.keys(dj.result||{})[0];var book=key2?dj.result[key2]:{bids:[],asks:[]};
-        var bidVol = (book.bids||[]).reduce(function(s,b){ var v=(parseFloat(b[0])||0)*(parseFloat(b[1])||0); return s+(isFinite(v)?v:0); }, 0);
-        var askVol = (book.asks||[]).reduce(function(s,a){ var v=(parseFloat(a[0])||0)*(parseFloat(a[1])||0); return s+(isFinite(v)?v:0); }, 0);
+        var book=dj.data||{bids:[],asks:[]};
+        var bidVol = (book.bids||[]).reduce(function(s,b){ var v=(parseFloat(b.price)||0)*(parseFloat(b.quantity)||0); return s+(isFinite(v)?v:0); }, 0);
+        var askVol = (book.asks||[]).reduce(function(s,a){ var v=(parseFloat(a.price)||0)*(parseFloat(a.quantity)||0); return s+(isFinite(v)?v:0); }, 0);
         var total  = bidVol + askVol;
         var ratio  = total > 0 ? bidVol / total : 0.5;
         var spread = book.asks[0] && book.bids[0]
-          ? (parseFloat(book.asks[0][0]) - parseFloat(book.bids[0][0])) / parseFloat(book.bids[0][0]) * 100
+          ? (parseFloat(book.asks[0].price) - parseFloat(book.bids[0].price)) / parseFloat(book.bids[0].price) * 100
           : 0;
         result = { ratio:+ratio.toFixed(3), bidVol:bidVol, askVol:askVol, spread:+spread.toFixed(4), ts:now };
       }
@@ -4253,7 +4369,7 @@ async function runBacktest() {
 
       if (sc >= minScore) {
         inPos = true;
-        entryPrice = closes[i+1] || closes[i]; // wejscie na open nastepnej swieci (aprox. close[i])
+        entryPrice = opens[i+1] || closes[i]; // wejscie na open nastepnej swieci (bylo blednie: close[i+1])
         entryDate  = dates[i+1] || dates[i];
         entryScore = sc;
         entryBar   = i + 1;
@@ -4950,8 +5066,17 @@ if (_modelsLoaded) {
 // ═══════════════════════════════════════════════════════════════
 // TOAST NOTIFICATIONS
 // ═══════════════════════════════════════════════════════════════
-var _soundOn = (localStorage.getItem('swingai_sound') === '1');
+// BUG: domyslnie dzwiek byl WYLACZONY dopoki uzytkownik sam nie kliknal
+// przelacznika - w praktyce nikt go nie odkrywal, wiec sygnaly dzwiekowe
+// "nie dzialaly" mimo ze caly mechanizm byl poprawny. Domyslnie ON, mozna wylaczyc.
+var _soundOn = (localStorage.getItem('swingai_sound') !== '0');
 var _audioCtx = null;
+// AudioContext wymaga gestu uzytkownika by wyjsc ze stanu 'suspended' (polityka
+// autoplay przegladarek) - bez tego dzwieki tworzone programowo (np. przy
+// automatycznym zamknieciu pozycji) moglyby nie byc slyszalne mimo ze _soundOn=true.
+document.addEventListener('click', function() {
+  if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
+}, { once: false });
 
 function _applySoundState() {
   var btn = gi('sound-toggle');
@@ -4983,23 +5108,39 @@ function playSound(type) {
     osc.frequency.setValueAtTime(523, _audioCtx.currentTime);
     osc.frequency.setValueAtTime(659, _audioCtx.currentTime + 0.08);
     osc.frequency.setValueAtTime(784, _audioCtx.currentTime + 0.16);
-    gain.gain.setValueAtTime(0.15, _audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.45, _audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.4);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.4);
   } else if (type === 'sell') {
     osc.frequency.setValueAtTime(784, _audioCtx.currentTime);
     osc.frequency.setValueAtTime(659, _audioCtx.currentTime + 0.1);
     osc.frequency.setValueAtTime(440, _audioCtx.currentTime + 0.2);
-    gain.gain.setValueAtTime(0.12, _audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.4, _audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.45);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.45);
   } else if (type === 'warn') {
     osc.type = 'square';
     osc.frequency.setValueAtTime(330, _audioCtx.currentTime);
     osc.frequency.setValueAtTime(330, _audioCtx.currentTime + 0.12);
-    gain.gain.setValueAtTime(0.07, _audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.22, _audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.3);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.3);
+  } else if (type === 'ok') {
+    // BUG: zamkniecie pozycji na proficie wywoluje toast(...,'ok',...) - bez tej
+    // galezi playSound() nie mial ZADNEGO dopasowania dla 'ok'/'err', wiec przy
+    // zamknieciu pozycji nie bylo dzwieku niezaleznie od ustawienia sound-toggle.
+    osc.frequency.setValueAtTime(659, _audioCtx.currentTime);
+    osc.frequency.setValueAtTime(880, _audioCtx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.42, _audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.35);
+    osc.start(); osc.stop(_audioCtx.currentTime + 0.35);
+  } else if (type === 'err') {
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(300, _audioCtx.currentTime);
+    osc.frequency.setValueAtTime(220, _audioCtx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.42, _audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.4);
+    osc.start(); osc.stop(_audioCtx.currentTime + 0.4);
   }
 }
 
@@ -5325,6 +5466,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </body>
 
 </html>
+
 
 
 
