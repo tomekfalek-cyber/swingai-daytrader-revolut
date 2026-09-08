@@ -3893,6 +3893,22 @@ function calcVWAP(highs, lows, closes, volumes) {
   return vol > 0 ? tpVol / vol : closes[closes.length-1];
 }
 
+// Sklastruj sasiadujace pivoty (w tolerancji %) w jeden precyzyjny poziom (usrednienie),
+// zeby uniknac kilku nakladajacych sie, "rozmytych" linii blisko tej samej ceny.
+function clusterLevels(values, tolPct) {
+  var sorted = values.slice().sort(function(a,b){ return a-b; });
+  var clusters = [];
+  sorted.forEach(function(v){
+    var last = clusters[clusters.length-1];
+    if (last && Math.abs(v/last.avg - 1) <= tolPct) {
+      last.sum += v; last.n += 1; last.avg = last.sum/last.n;
+    } else {
+      clusters.push({ sum: v, n: 1, avg: v });
+    }
+  });
+  return clusters.map(function(c){ return c.avg; });
+}
+
 // Wykryj lokalne pivoty S/R z ostatnich 50 swiec 1H
 function calcSRLevels(highs, lows, price) {
   var n = Math.min(50, highs.length);
@@ -3904,8 +3920,10 @@ function calcSRLevels(highs, lows, price) {
     if (lows[i] < lows[i-1] && lows[i] < lows[i-2] && lows[i] < lows[i+1] && lows[i] < lows[i+2])
       pivotLows.push(lows[i]);
   }
-  var above = pivotHighs.filter(function(v){ return v > price; }).sort(function(a,b){ return a-b; }).slice(0,3);
-  var below = pivotLows.filter(function(v){ return v < price; }).sort(function(a,b){ return b-a; }).slice(0,2);
+  var clusteredHighs = clusterLevels(pivotHighs, 0.0025);
+  var clusteredLows  = clusterLevels(pivotLows, 0.0025);
+  var above = clusteredHighs.filter(function(v){ return v > price; }).sort(function(a,b){ return a-b; }).slice(0,3);
+  var below = clusteredLows.filter(function(v){ return v < price; }).sort(function(a,b){ return b-a; }).slice(0,2);
   return { above: above, below: below, all: above.concat(below) };
 }
 
@@ -5306,41 +5324,42 @@ var INLINE_CHART = {
     }
     function drawLevelLine(price, color, label, dash) {
       var y = yP(price);
-      ctx.setLineDash(dash || [5,3]);
-      ctx.strokeStyle = color; ctx.lineWidth = 1.3;
+      ctx.setLineDash(dash || [6,3]);
+      ctx.strokeStyle = color; ctx.lineWidth = 2.2;
       ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W-PAD.r, y); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = color; ctx.font = 'bold 8.5px JetBrains Mono,monospace'; ctx.textAlign = 'left';
+      ctx.fillStyle = color; ctx.font = 'bold 9.5px JetBrains Mono,monospace'; ctx.textAlign = 'left';
       var pLbl = price>=1?price.toFixed(2):price.toFixed(5);
       ctx.fillText(label + ' ' + pLbl, PAD.l + 4, y - 3);
     }
     var rrText = null;
     if (sig && sig.buy && sig.levels) {
-      drawZone(sig.price, sig.levels.tp, 'rgba(0,229,160,0.12)');
-      drawZone(sig.price, sig.levels.sl, 'rgba(255,61,90,0.12)');
-      drawLevelLine(sig.levels.tp, 'rgba(0,229,160,0.9)', 'TP');
-      drawLevelLine(sig.levels.sl, 'rgba(255,61,90,0.9)', 'SL');
+      drawZone(sig.price, sig.levels.tp, 'rgba(0,229,160,0.20)');
+      drawZone(sig.price, sig.levels.sl, 'rgba(255,61,90,0.20)');
+      drawLevelLine(sig.levels.tp, 'rgba(0,229,160,1)', 'TP');
+      drawLevelLine(sig.levels.sl, 'rgba(255,61,90,1)', 'SL');
       drawLevelLine(sig.price,     'rgba(255,255,255,0.55)', 'WEJŚCIE (LONG)', [2,2]);
       rrText = { text: 'R:R 1:' + sig.levels.rr, color: 'rgba(0,229,160,0.95)', dir: 'LONG' };
     } else if (sig && sig.shortSignal && sig.shortLevels) {
-      // Short = TYLKO informacyjny (Revolut X nie obsluguje marginu) - inny
-      // odcien (bursztynowy), zeby wizualnie nie mylic z realnie wykonywalnym longiem.
-      drawZone(sig.price, sig.shortLevels.tp, 'rgba(255,179,71,0.10)');
-      drawZone(sig.price, sig.shortLevels.sl, 'rgba(255,61,90,0.10)');
-      drawLevelLine(sig.shortLevels.tp, 'rgba(255,179,71,0.85)', 'TP (short, info)');
-      drawLevelLine(sig.shortLevels.sl, 'rgba(255,61,90,0.85)', 'SL (short, info)');
+      // Short = TYLKO informacyjny (Revolut X nie obsluguje marginu). Kolory
+      // TP/SL takie same jak dla longa (zielony/czerwony) - odroznienie od
+      // realnie wykonywalnego longa idzie przez etykiete "(short, info)".
+      drawZone(sig.price, sig.shortLevels.tp, 'rgba(0,229,160,0.20)');
+      drawZone(sig.price, sig.shortLevels.sl, 'rgba(255,61,90,0.20)');
+      drawLevelLine(sig.shortLevels.tp, 'rgba(0,229,160,1)', 'TP (short, info)');
+      drawLevelLine(sig.shortLevels.sl, 'rgba(255,61,90,1)', 'SL (short, info)');
       drawLevelLine(sig.price,          'rgba(255,255,255,0.55)', 'POZIOM (SHORT — INFO, nie wykonywany)', [2,2]);
-      rrText = { text: 'R:R 1:' + sig.shortLevels.rr + ' (informacyjnie)', color: 'rgba(255,179,71,0.95)', dir: 'SHORT (info)' };
+      rrText = { text: 'R:R 1:' + sig.shortLevels.rr + ' (informacyjnie)', color: 'rgba(0,229,160,0.95)', dir: 'SHORT (info)' };
     }
 
-    // ── WSPARCIE / OPÓR (S/R) — pogrubione linie, aktualne po kazdym skanie ──
+    // ── WSPARCIE / OPÓR (S/R) — precyzyjna linia 1px, pixel-snapped, cena z pelna dokladnoscia ──
     function drawSRLine(price, color, label) {
-      var y = yP(price);
+      var y = Math.round(yP(price)) + 0.5; // snap do pikselowej sieci = ostra, nie rozmyta linia
       ctx.setLineDash([]);
-      ctx.strokeStyle = color; ctx.lineWidth = 3;
+      ctx.strokeStyle = color; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W-PAD.r, y); ctx.stroke();
       ctx.fillStyle = color; ctx.font = 'bold 8.5px JetBrains Mono,monospace'; ctx.textAlign = 'right';
-      var pLbl = price>=1?price.toFixed(2):price.toFixed(5);
+      var pLbl = price>=1000?price.toFixed(1):price>=1?price.toFixed(4):price.toFixed(6);
       ctx.fillText(label + ' ' + pLbl, W-PAD.r-4, y - 4);
     }
     if (sig && sig.srLevels) {
@@ -5474,6 +5493,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </body>
 
 </html>
+
 
 
 
