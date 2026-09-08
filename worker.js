@@ -993,8 +993,18 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   // wiec bot NIGDY nie wykonuje realnej krotkiej sprzedazy). Wymaga symetrycznie
   // niskiego finalProb ORAZ potwierdzenia niedzwiedziej struktury SMC - samo niskie
   // prawdopodobienstwo bez potwierdzenia struktury to za slaby sygnal do pokazania.
-  const shortSignal = finalProb <= (1 - minScore/100)
-    && (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || liqSweep && liqSweep.type === 'bearish' || bearBias);
+  //
+  // Lustrzany confluence gate (ten sam prog co dla longa, NIE ostrzejszy - shorty
+  // sa tylko informacyjne, wiec nie ma powodu zawyzac bariery ponad to co juz
+  // dziala dla longow; wyzszy prog tylko zdusilby liczbe okazji pokazywanych w
+  // ciagu dnia bez realnej korzysci, skoro i tak nic sie nie wykonuje).
+  const bearConfluence = [
+    trendD <= -1,
+    (rsiD >= 60 || bbD.pos > 0.80 || divD.bear || div4h.bear),
+    (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || nearBearOB || (liqSweep && liqSweep.type === 'bearish')),
+    (volR > 1.3 || vol4R > 1.3)
+  ].filter(Boolean).length;
+  const shortSignal = finalProb <= (1 - minScore/100) && bearConfluence >= 2;
   const shortLevels = shortSignal ? {
     tp: price * (1 - Math.max(cfg.tp, atrD/price*2.5)),
     sl: price * (1 + Math.max(cfg.sl, atrD/price*1.5)),
