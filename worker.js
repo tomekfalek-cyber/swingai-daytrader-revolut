@@ -13,7 +13,13 @@
 // Day trading: mniej par niz w wersji swingowej, bo skan jest 3x czestszy (co 3
 // min zamiast 10) - trzyma budzet zapytan/dzien i limit KV w bezpiecznych granicach
 // mimo wiekszej czestotliwosci. Najbardziej plynne pary, najlepsze dla intraday.
-const PAIRS = ['XBTUSDT','ETHUSDT','SOLUSDT','XRPUSDT'];
+// PEPEUSDT dodany po potwierdzeniu, ze Revolut X notuje PEPE/USDC - traktowany
+// jako "satelitarna" para wysokiego ryzyka: wlasna grupa korelacji (nie koreluje
+// bezposrednio z BTC/ETH/SOL/XRP na tyle, by wymagac blokady), szerszy tp/sl i
+// wyzszy minScore w PAIR_PARAMS_DEFAULT (nizej), a filtr pump/dump jest juz
+// ATR-relative (patrz isPumpDump) - automatycznie dopasowuje sie do jego
+// naturalnie wyzszej zmiennosci bez recznego przeliczania.
+const PAIRS = ['XBTUSDT','ETHUSDT','SOLUSDT','XRPUSDT','PEPEUSDT'];
 const FEE   = 0.002;
 const TIMEOUT_MS = 8 * 3600000; // 8h - day trading: pozycja zamykana w ramach jednej sesji, nie tygodniami jak w swingu
 
@@ -23,7 +29,8 @@ const CORR_GROUPS = [
   ['SOLUSDT','AVAXUSDT'],
   ['XRPUSDT','ADAUSDT'],
   ['DOGEUSDT'],
-  ['LINKUSDT']
+  ['LINKUSDT'],
+  ['PEPEUSDT']
 ];
 
 // tp/sl przeskalowane ze starych wartosci swingowych (10-18%/4-7%) na skale
@@ -41,7 +48,13 @@ const PAIR_PARAMS_DEFAULT = {
   'DOGEUSDT': { tp:0.030, sl:0.014, minScore:64 },
   'ADAUSDT':  { tp:0.023, sl:0.012, minScore:62 },
   'AVAXUSDT': { tp:0.023, sl:0.012, minScore:62 },
-  'LINKUSDT': { tp:0.023, sl:0.012, minScore:62 }
+  'LINKUSDT': { tp:0.023, sl:0.012, minScore:62 },
+  // Memecoin - naturalna zmiennosc wyzsza niz reszta par, technicznie mniej
+  // przewidywalna (ruchy sterowane sentymentem/social, nie tylko przeplywem
+  // kapitalu jak BTC/ETH) - szerszy tp/sl (floor, bo calcDynamicLevels i tak
+  // bierze max(tp, atrPct*2.5)) i wyzszy minScore (mniejsza pewnosc sygnalow
+  // technicznych dla tego typu instrumentu wymaga mocniejszego potwierdzenia).
+  'PEPEUSDT': { tp:0.035, sl:0.018, minScore:68 }
 };
 
 // Revolut X base URL
@@ -337,7 +350,7 @@ export default {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: cfg.tgChat,
-              text: 'Witaj! SwingAI Bot 24/7 â€” Revolut X aktywny.\n\nPolaczenie dziala.\nPary: BTC ETH SOL XRP\nSkany co 1h przez Cloudflare Worker.',
+              text: 'Witaj! SwingAI Bot 24/7 â€” Revolut X aktywny.\n\nPolaczenie dziala.\nPary: BTC ETH SOL XRP PEPE\nSkany co 3 min przez Cloudflare Worker.',
               parse_mode: 'HTML'
             })
           }
@@ -1174,10 +1187,10 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   const levels = calcDynamicLevels(adjSig.price, adjSig.atrD, cfg, pp, adjSig.spreadPct);
 
   addLog(state,
-    'BUY ' + adjSig.sym + ' @ ' + adjSig.price.toFixed(4) +
+    'BUY ' + adjSig.sym + ' @ ' + fmtPrice(adjSig.price) +
     ' | score=' + adjSig.score + ' finalProb=' + (adjSig.finalProb*100).toFixed(1) + '%' +
-    ' | $' + posSize.toFixed(2) + ' TP=' + levels.tp.toFixed(4) +
-    ' SL=' + levels.sl.toFixed(4) + ' R:R=' + levels.rr +
+    ' | $' + posSize.toFixed(2) + ' TP=' + fmtPrice(levels.tp) +
+    ' SL=' + fmtPrice(levels.sl) + ' R:R=' + levels.rr +
     ' | ' + adjSig.aiMethod + ' | ' + cfg.mode.toUpperCase(), 'ok');
 
   if (!Array.isArray(state.positions)) state.positions = [];
@@ -1215,10 +1228,10 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   const _modeLabel = cfg.mode === 'live' ? 'LIVE (Revolut X)' : 'PAPER (symulacja)';
   await tgSend(cfg,
     'SYGNAL KUPNA â€” ' + _pairName + '\n\n' +
-    'Cena wejscia: $' + adjSig.price.toFixed(4) + '\n' +
+    'Cena wejscia: $' + fmtPrice(adjSig.price) + '\n' +
     'Rozmiar pozycji: $' + posSize.toFixed(2) + ' (Kelly)\n' +
-    'Take Profit: $' + levels.tp.toFixed(4) + '\n' +
-    'Stop Loss: $' + levels.sl.toFixed(4) + '\n' +
+    'Take Profit: $' + fmtPrice(levels.tp) + '\n' +
+    'Stop Loss: $' + fmtPrice(levels.sl) + '\n' +
     'Zysk/Ryzyko: ' + levels.rr + '\n\n' +
     'Wynik AI: ' + adjSig.score + '/100 | Pewnosc: ' + (adjSig.finalProb*100).toFixed(1) + '%\n' +
     'Metoda: ' + adjSig.aiMethod + '\n' +
@@ -2227,6 +2240,17 @@ function addLog(state, msg, type='info') {
 }
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// FIX: .toFixed(4) na cenie dawal "0.0000" dla PEPE (~$0.000005) w logach i
+// Telegramie - bezuzyteczne. Adaptacyjna precyzja wedlug rzedu wielkosci ceny
+// (ten sam pomysl co juz istniejaca fp() w dashboardzie index.html).
+function fmtPrice(p) {
+  if (!isFinite(p)) return String(p);
+  if (p >= 1000) return p.toFixed(1);
+  if (p >= 1)    return p.toFixed(4);
+  if (p >= 0.01) return p.toFixed(6);
+  return p.toFixed(8);
+}
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 // HELPERS
