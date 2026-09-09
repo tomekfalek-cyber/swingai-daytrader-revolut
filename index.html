@@ -680,7 +680,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
         <div>
           <div class="sec-t" style="margin-bottom:8px">Optymalizacja wag (Decision Tree)</div>
           <div style="font-size:8.5pt;color:var(--text2);margin-bottom:10px;line-height:1.7">
-            Algorytm analizuje dane historyczne z Binance i oblicza optymalne wagi dla każdego wskaźnika.<br>
+            Algorytm analizuje dane historyczne z Bybit i oblicza optymalne wagi dla każdego wskaźnika.<br>
             Wyniki zastępują hardkodowane wagi w silniku scoringu.
           </div>
           <div class="r2" style="margin-bottom:6px"><span class="lbl">Para treningowa</span>
@@ -897,7 +897,6 @@ let CFG = {
 // Day trading: mniej par niz swing (bylo 8), bo czestszy skan (co 3 min) wymaga
 // bezpiecznego budzetu zapytan. Ta sama poprawka co w worker.js.
 const PAIRS = ['BTC_USDC','ETH_USDC','SOL_USDC','XRP_USDC','PEPE_USDC'];
-const BASE = 'https://api.binance.com';
 const FEE  = 0.002;
 
 // ── STATE ──────────────────────────────────────────────────────────
@@ -1142,7 +1141,7 @@ async function bybPub(path, params={}) {
   return d.result;
 }
 
-// Adapter: pobierz świece z Bybit w formacie Binance [ts,o,h,l,c,v]
+// Adapter: pobierz świece z Bybit, znormalizowane do tablicy [ts,o,h,l,c,v]
 async function bybGetKlines(sym, tf, limit) {
   const tfMap = {'1d':'D','4h':'240','1h':'60','15m':'15'};
   const bybTf = tfMap[tf] || 'D';
@@ -1367,84 +1366,14 @@ async function okxExecSell(sym, qty) {
   }
 }
 
-// ── BINANCE API ────────────────────────────────────────────────────
-async function hmac(msg) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', enc.encode(CFG.secret), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg));
-  return Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join('');
-}
+// USUNIETO: martwy kod live-egzekucji przez Binance (hmac/signedReq/apiBase z
+// X-MBX-APIKEY) i Binance'owy LOT_SIZE/stepSize prefetch (/api/v3/exchangeInfo) -
+// ten agent nie ma i nie bedzie mial nic wspolnego z Binance. Realny handel LIVE dziala WYLACZNIE przez
+// Cloudflare Worker + Revolut X (execBuy/execSell nizej odcinaja LIVE z przegladarki
+// jasnym bledem). Dane rynkowe (getKlines/getTicker nizej) juz od dawna ida przez
+// Worker /market -> Bybit, nie przez ten usuniety kod.
 function workerReady() { return !!(CFG.workerUrl && CFG.workerUrl.startsWith('https://')); }
-function apiBase() { return workerReady() ? CFG.workerUrl.replace(/\/+$/,'')+'/proxy' : BASE; }
 
-async function signedReq(method, path, params={}) {
-  if (!workerReady()) throw new Error('Brak Worker URL');
-  params.timestamp  = Date.now();
-  params.recvWindow = 5000;  // chroni przed odrzuceniem zlecenia przy opóźnieniu sieci
-  const qs1 = new URLSearchParams(params).toString();
-  params.signature = await hmac(qs1);
-  const r = await fetchWithTimeout(apiBase()+path+'?'+new URLSearchParams(params).toString(),
-    {method, headers:{'X-MBX-APIKEY':CFG.apiKey}});
-  if (!r.ok) { const e=await r.json().catch(()=>({msg:r.statusText})); throw new Error(e.msg||r.statusText); }
-  return r.json();
-}
-
-// Oblicza średnią ważoną cenę z tablicy fills Binance (obsługa częściowych wypełnień)
-function calcFillPrice(fills) {
-  if (!fills || !fills.length) return 0;
-  let totalQty = 0, totalCost = 0;
-  for (const f of fills) {
-    const p = +(f.price||0), q = +(f.qty||0);
-    if (p > 0 && q > 0) { totalCost += p*q; totalQty += q; }
-  }
-  return totalQty > 0 ? totalCost/totalQty : +(fills[0].price||0);
-}
-
-// ── LOT_SIZE / STEP_SIZE CACHE ─────────────────────────────────────
-// Cache stepSize per para — pobierany raz z /api/v3/exchangeInfo
-var _stepSizeCache = {};
-async function fetchStepSize(sym) {
-  if (_stepSizeCache[sym] !== undefined) return _stepSizeCache[sym];
-  try {
-    const d = await pub('/api/v3/exchangeInfo', {symbol:sym});
-    const info = (d.symbols||[]).find(function(s){ return s.symbol===sym; });
-    if (!info) { _stepSizeCache[sym] = 1e-6; return 1e-6; }
-    const lotFilter = (info.filters||[]).find(function(f){ return f.filterType==='LOT_SIZE'; });
-    const stepSize  = lotFilter ? parseFloat(lotFilter.stepSize) : 1e-6;
-    _stepSizeCache[sym] = stepSize > 0 ? stepSize : 1e-6;
-  } catch(e) {
-    _stepSizeCache[sym] = 1e-6; // fallback — 6 miejsc dziesiętnych
-  }
-  return _stepSizeCache[sym];
-}
-// Zaokrągla qty w dół do stepSize (nie zaokrąglaj w górę — Binance odrzuci nadmiar)
-function roundQty(sym, qty) {
-  const step = _stepSizeCache[sym] || 1e-6;
-  if (step <= 0 || !isFinite(step)) return +qty.toFixed(6);
-  const precision = Math.round(-Math.log10(step));
-  return Math.floor(qty / step) * step;
-}
-// Prefetch stepSize przy starcie bota dla wszystkich par
-async function prefetchStepSizes() {
-  if (CFG.mode === 'paper') return;
-  try {
-    const d = await pub('/api/v3/exchangeInfo');
-    (d.symbols||[]).forEach(function(info) {
-      if (!PAIRS.includes(info.symbol)) return;
-      const lotFilter = (info.filters||[]).find(function(f){ return f.filterType==='LOT_SIZE'; });
-      const stepSize  = lotFilter ? parseFloat(lotFilter.stepSize) : 1e-6;
-      _stepSizeCache[info.symbol] = stepSize > 0 ? stepSize : 1e-6;
-    });
-    log('LOT_SIZE cache: '+Object.keys(_stepSizeCache).length+' par', 'ok');
-  } catch(e) {
-    log('prefetchStepSizes blad: '+e.message, 'warn');
-  }
-}
-async function pub(path, params={}) {
-  const r = await fetchWithTimeout(BASE+path+(Object.keys(params).length?'?'+new URLSearchParams(params):''));
-  if (!r.ok) throw new Error(r.statusText);
-  return r.json();
-}
 async function getKlines(sym,tf,limit){
   limit=limit||200;
   // Revolut X format: "BTC/USDC" - to zamiana podkreslnika na slash, 1:1 z
@@ -1530,7 +1459,7 @@ function ema(a,p) { const arr=emaArr(a,p); return arr.length ? arr.at(-1) : 0; }
 function rsi(c, p) {
   p = p || 14;
   if (c.length < p + 1) return 50;
-  // Wilder's smoothing (zgodny z TradingView / Binance)
+  // Wilder's smoothing (standardowa, kanoniczna definicja ATR/RSI)
   var avgG = 0, avgL = 0;
   for (var i = 1; i <= p; i++) {
     var d = c[i] - c[i-1];
@@ -2115,85 +2044,24 @@ function aiExplainShortPosition(pos, sig) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  IMPROVEMENT 1: WEBSOCKET — live stream cen
-//  Binance stream: wss://stream.binance.com:9443/stream
-//  Aktualizuje pos.cp w czasie rzeczywistym i wywoluje checkTrail()
+//  Live ceny pozycji — REST polling przez Worker (Bybit), NIE WebSocket.
+//  USUNIETO: martwy kod WebSocket do wss://stream.binance.com (ten agent nie
+//  ma i nie bedzie mial nic wspolnego z Binance). connect() byl juz od dawna
+//  no-opem (early return) - realne odswiezanie pos.cp/checkTrail robi szybki
+//  polling co 30s (setInterval nizej, checkPositions) niezaleznie od tego
+//  obiektu. Zostawiono WS jako stub, bo disconnect()/getPrice()/isAlive() i
+//  status w UI ('rb-ws') sa jeszcze uzywane w kilku miejscach.
 // ═══════════════════════════════════════════════════════════════════
 var WS = {
   socket: null,
   active: false,
-  blocked: false,    // true gdy siec blokuje WS (np. Zscaler)
+  blocked: true,     // trwale nieaktywny (polling REST przez Worker/Bybit)
   retries: 0,
-  maxRetries: 3,     // po 3 nieudanych probach — trwaly polling, bez spamu
+  maxRetries: 3,
   livePrice: {},
   lastPing: 0,
 
-  buildStreamUrl: function() {
-    var streams = PAIRS.map(function(s){ return s.toLowerCase()+'@miniTicker'; });
-    return 'wss://stream.binance.com:9443/stream?streams='+streams.join('/');
-  },
-
-  connect: function() {
-    if (this.blocked) return;                              // siec blokuje — nie probuj
-    return; // Revolut X — polling REST via Worker
-    if (this.socket && this.socket.readyState < 2) return; // juz podlaczony
-    try {
-      this.socket = new WebSocket(this.buildStreamUrl());
-      this.active = false;
-
-      this.socket.onopen = function() {
-        WS.active   = true;
-        WS.retries  = 0;
-        WS.blocked  = false;
-        WS.lastPing = Date.now();
-        log('WebSocket polaczony — live ceny aktywne', 'ok');
-        updateWSStatus(true);
-      };
-
-      this.socket.onmessage = function(evt) {
-        try {
-          var msg = JSON.parse(evt.data);
-          var d   = msg.data || msg;
-          var sym = (d.s || '').toUpperCase();
-          var price = parseFloat(d.c || d.lastPrice || 0);
-          if (!sym || !price) return;
-          WS.livePrice[sym] = price;
-          WS.lastPing = Date.now();
-          ST.positions.forEach(function(pos) {
-            if (pos.sym !== sym) return;
-            pos.cp = price;
-            if (price > (pos.highP || pos.entry)) pos.highP = price;
-            WS.checkTrail(pos, price);
-          });
-        } catch(e) {}
-      };
-
-      this.socket.onerror = function() {
-        WS.active = false;
-        updateWSStatus(false);
-        // Nie loguj bledu co probe — tylko raz
-        if (WS.retries === 0) log('WebSocket zablokowany (Zscaler/firewall) — bot uzywa polling REST API', 'warn');
-      };
-
-      this.socket.onclose = function() {
-        WS.active = false;
-        updateWSStatus(false);
-        WS.retries++;
-        if (WS.retries >= WS.maxRetries) {
-          WS.blocked = true;
-          log('WebSocket niedostepny po '+WS.maxRetries+' probach — trwaly polling aktywny. Bot dziala normalnie.', 'warn');
-          updateWSStatus(false);
-          return; // brak dalszych prob
-        }
-        // Kolejna proba z exponential backoff (10s, 20s, 40s)
-        var delay = 10000 * Math.pow(2, WS.retries - 1);
-        setTimeout(function(){ if (running && !WS.blocked) WS.connect(); }, delay);
-      };
-    } catch(e) {
-      WS.blocked = true;
-      log('WebSocket niedostepny — polling aktywny', 'warn');
-    }
-  },
+  connect: function() { /* no-op — polling REST via Worker/Bybit, patrz checkPositions() */ },
 
   disconnect: function() {
     this.active  = false;
@@ -2283,7 +2151,7 @@ function updateWSStatus(active) {
   if (active) {
     el.textContent = 'LIVE ⚡'; el.className = 'val up';
   } else if (WS.blocked) {
-    el.textContent = 'Polling (firewall)'; el.className = 'val neu';
+    el.textContent = 'Polling (REST)'; el.className = 'val neu';
   } else {
     el.textContent = 'Polling'; el.className = 'val neu';
   }
@@ -2851,9 +2719,7 @@ async function startBot() {
   if (!ST.dailyStartBalance || ST.dailyDate !== new Date().toDateString()) {
     getTotal().then(function(t){ if (t>0 && !ST.dailyStartBalance) { ST.dailyStartBalance=t; saveAll(); } }).catch(function(){});
   }
-  // Pobierz LOT_SIZE/stepSize dla wszystkich par (Binance LIVE) — unikamy odrzuceń zleceń
-  prefetchStepSizes();
-  // Uruchom WebSocket
+  // Uruchom WebSocket (no-op — patrz komentarz w WS.connect, polling REST via Worker)
   WS.connect();
   // Retrenuj AI na historii z poprzednich sesji
   setTimeout(function(){ ADAPTIVE.retrain(); updateAIStatusPanel(); }, 800);
@@ -3482,7 +3348,7 @@ function clearLog() { gi('log-area').innerHTML=''; var lc=gi('log-count'); if(lc
 // ═══════════════════════════════════════════════════════════════════
 //  AI MODULE 5: ORDER BOOK IMBALANCE
 //  bid_vol / (bid_vol + ask_vol) > 0.65 → bullish pressure
-//  Pobiera top 20 poziomow order booka z Binance /api/v3/depth
+//  Pobiera top 20 poziomow order booka przez Worker /market -> Bybit
 // ═══════════════════════════════════════════════════════════════════
 var OBI = {
   cache: {},   // sym -> {ratio, ts}
@@ -4330,10 +4196,9 @@ async function runBacktest() {
   var slPct   = parseFloat(gi('bt-sl').value)/100;
   var btn     = gi('bt-btn');
   btn.disabled=true; btn.textContent='Pobieranie danych...';
-  gi('bt-progress').textContent = 'Pobieranie '+days+' dni danych z Binance...';
+  gi('bt-progress').textContent = 'Pobieranie '+days+' dni danych z Bybit...';
 
   try {
-    // Używa aktywnej giełdy (Binance lub Bybit) zgodnie z konfiguracją
     var klines = await getKlines(sym, '1h', Math.min(days*24, 720)); // day trading: swiece 1H, limit API ~720
     var closes  = klines.map(function(k){ return +k[4]; });
     var highs   = klines.map(function(k){ return +k[2]; });
@@ -4685,7 +4550,7 @@ function drawMLChart(result) {
   ctx.fillText('Information Gain per wskaznik (wiekszy = wazniejszy)', 10, 12);
 }
 
-// Trenuj NB + GBM na danych historycznych Binance (bez historii transakcji)
+// Trenuj NB + GBM na danych historycznych Bybit (bez historii transakcji)
 async function trainAllAI() {
   var sym  = gi('ml-sym').value;
   var days = parseInt(gi('ml-days').value);
