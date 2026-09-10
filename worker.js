@@ -40,20 +40,21 @@ const CORR_GROUPS = [
 // niskim progu i skanie co 3 min przechodzilo za duzo szumu; wyzszy prog +
 // wymog confluence (analyzeSwing) maja ograniczyc liczbe slabych wejsc bez
 // utraty czestotliwosci potrzebnej do day tradingu.
+// UWAGA: tp/sl tutaj to HARDKODOWANY OVERRIDE ktory ma priorytet nad
+// ustawieniami cfg.tp/cfg.sl z panelu (patrz calcDynamicLevels) - dla par
+// bez pola tp/sl ponizej, bot uzywa Twoich wartosci z konfiguracji.
+// Tylko PEPEUSDT ma wlasny override (memecoin - wieksza naturalna
+// zmiennosc niz reszta par, wymaga szerszego floor tp/sl niz standardowe
+// ustawienie, inaczej SL wybijalby na normalnym szumie ceny).
 const PAIR_PARAMS_DEFAULT = {
-  'XBTUSDT':  { tp:0.017, sl:0.008, minScore:66 },
-  'ETHUSDT':  { tp:0.020, sl:0.010, minScore:64 },
-  'SOLUSDT':  { tp:0.023, sl:0.012, minScore:62 },
-  'XRPUSDT':  { tp:0.025, sl:0.012, minScore:62 },
-  'DOGEUSDT': { tp:0.030, sl:0.014, minScore:64 },
-  'ADAUSDT':  { tp:0.023, sl:0.012, minScore:62 },
-  'AVAXUSDT': { tp:0.023, sl:0.012, minScore:62 },
-  'LINKUSDT': { tp:0.023, sl:0.012, minScore:62 },
-  // Memecoin - naturalna zmiennosc wyzsza niz reszta par, technicznie mniej
-  // przewidywalna (ruchy sterowane sentymentem/social, nie tylko przeplywem
-  // kapitalu jak BTC/ETH) - szerszy tp/sl (floor, bo calcDynamicLevels i tak
-  // bierze max(tp, atrPct*2.5)) i wyzszy minScore (mniejsza pewnosc sygnalow
-  // technicznych dla tego typu instrumentu wymaga mocniejszego potwierdzenia).
+  'XBTUSDT':  { minScore:66 },
+  'ETHUSDT':  { minScore:64 },
+  'SOLUSDT':  { minScore:62 },
+  'XRPUSDT':  { minScore:62 },
+  'DOGEUSDT': { minScore:64 },
+  'ADAUSDT':  { minScore:62 },
+  'AVAXUSDT': { minScore:62 },
+  'LINKUSDT': { minScore:62 },
   'PEPEUSDT': { tp:0.035, sl:0.018, minScore:68 }
 };
 
@@ -1178,13 +1179,28 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
     }
   }
 
-  const posSize = kellySize(cfg, state, total);
+  const pp     = pp0;
+  const levels = calcDynamicLevels(adjSig.price, adjSig.atrD, cfg, pp, adjSig.spreadPct);
+  const slPct  = (adjSig.price - levels.sl) / adjSig.price;
+  let posSize = kellySize(cfg, state, total, slPct);
+
+  // Defensywny throttle wg realnej wydajnosci (Sharpe/maxDD) - do tej pory
+  // calcStats liczyl te metryki wylacznie do wyswietlenia na dashboardzie,
+  // bez zadnego wplywu na decyzje bota. Gdy ostatnia seria trejdow ma
+  // ujemny Sharpe albo glebszy drawdown, ciecie rozmiaru o polowe (NIE
+  // pelna blokada - od tego sa juz osobne circuit breakery: consLoss,
+  // dailyPnl, drawdown -15%) daje botowi szanse "oddychac" mniejszym
+  // ryzykiem, zamiast handlowac pelnym rozmiarem w slabej serii.
+  const st = state.stats;
+  if (st && (state.trades || []).length >= 15 && (st.sharpe < 0 || st.maxDD > 20)) {
+    posSize = Math.max(5, Math.round(posSize * 0.5 * 100) / 100);
+    addLog(state, 'Throttle ryzyka (Sharpe=' + st.sharpe + ' maxDD=' + st.maxDD + '%) — rozmiar x0.5', 'warn');
+  }
+
   const minSize = micro ? 1 : 10;
   if (posSize < minSize) {
     addLog(state, 'Za mala pozycja (' + posSize.toFixed(2) + '$) — pomijam ' + sig.sym, 'warn'); return;
   }
-  const pp     = pp0;
-  const levels = calcDynamicLevels(adjSig.price, adjSig.atrD, cfg, pp, adjSig.spreadPct);
 
   addLog(state,
     'BUY ' + adjSig.sym + ' @ ' + fmtPrice(adjSig.price) +
@@ -1251,20 +1267,31 @@ function buildPosition(sig, price, qty, levels, size, ql) {
 }
 
 async function closePosition(pos, price, reason, cfg, state, ql) {
-  const grossPnl = (price - pos.entry) * pos.qty;
-  const feeCost  = pos.size * FEE + (pos.size + grossPnl) * FEE;
-  const pnl      = grossPnl - feeCost;
-  const pnlPct   = pnl / pos.size * 100;
-  const durH     = ((Date.now() - pos.entryTs) / 3600000).toFixed(1);
-
+  // execPrice = realna cena wykonania SELL na gieldzie (live) - moze sie
+  // roznic od `price` (ostatni obserwowany kurs, ktory wywolal decyzje o
+  // zamknieciu) o realny slippage/spread. W paper trybie execPrice=price
+  // (brak realnej egzekucji, wiec brak slippage do zmierzenia).
+  let execPrice = price;
   if (cfg.mode === 'live' && cfg.revxApiKey && cfg.revxPrivKey) {
     try {
-      await revxMarketSell(pos.sym, pos.qty, cfg);
+      const res = await revxMarketSell(pos.sym, pos.qty, cfg);
+      execPrice = res.price || price;
     } catch(e) {
       addLog(state, 'SELL FAILED ' + pos.sym + ': ' + e.message, 'err');
       return false;
     }
-  } else if (cfg.mode === 'paper') {
+  }
+
+  const grossPnl = (execPrice - pos.entry) * pos.qty;
+  const feeCost  = pos.size * FEE + (pos.size + grossPnl) * FEE;
+  const pnl      = grossPnl - feeCost;
+  const pnlPct   = pnl / pos.size * 100;
+  const durH     = ((Date.now() - pos.entryTs) / 3600000).toFixed(1);
+  // Slippage: roznica miedzy cena, ktora wywolala decyzje (`price`) a realna
+  // cena wykonania (`execPrice`) - w % ceny sygnalu. W paper zawsze 0.
+  const slippagePct = price > 0 ? +(((execPrice - price) / price) * 100).toFixed(3) : 0;
+
+  if (cfg.mode === 'paper') {
     state.paperBalance = (state.paperBalance || 0) + pos.size + pnl;
   }
 
@@ -1290,8 +1317,8 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
   }
 
   const trade = {
-    sym: pos.sym, entry: pos.entry, exit: price, qty: pos.qty,
-    pnl: +pnl.toFixed(4), pnlPct: +pnlPct.toFixed(2),
+    sym: pos.sym, entry: pos.entry, exit: execPrice, qty: pos.qty,
+    pnl: +pnl.toFixed(4), pnlPct: +pnlPct.toFixed(2), slippagePct,
     durH, reason, score: pos.score, finalProb: pos.finalProb,
     aiMethod: pos.aiMethod, nbFeatures: pos.nbFeatures, gbmFeatures: pos.gbmFeatures,
     nbLabel: pos.nbLabel || 'NEUTRAL', gbmProb: pos.gbmProb, ts: Date.now()
@@ -1389,7 +1416,15 @@ function corrBlocked(sym, state) {
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 function isMicroAccount(total) { return (isFinite(total) && total > 0 && total < 100); }
 
-function kellySize(cfg, state, total) {
+// slPct = realny dystans stop-lossa TEJ konkretnej pozycji (po ATR-floor,
+// per-para override itd. - patrz calcDynamicLevels), NIE cfg.sl z panelu.
+// RISK PARITY: bez normalizacji ponizej, ten sam $ rozmiar pozycji dawal
+// rozny $ risk (size*slPct) w zaleznosci od tego, jak szeroki wyszedl SL na
+// danej parze/w danym momencie (ATR) - PEPE z szerszym SL ryzykowal
+// realnie wiecej dolarow niz BTC przy identycznym rozmiarze w $. Standard
+// instytucjonalny: wielkosc pozycji ma sie skalowac odwrotnie do dystansu
+// stopa, tak by ryzykowany $ byl porownywalny miedzy trejdami/parami.
+function kellySize(cfg, state, total, slPct) {
   const safeTotal = (isFinite(total) && total > 0) ? total : 100;
 
   if (isMicroAccount(safeTotal)) {
@@ -1398,21 +1433,41 @@ function kellySize(cfg, state, total) {
 
   const fixedSize = cfg.posSize || 15;
   const trades    = (state.trades || []).slice(0, 30); // FIX 7: slice(0,30) = najnowsze 30 tradĂłw
+  let sz;
   if (trades.length < 5) {
-    return Math.min(fixedSize, Math.max(10, safeTotal * (cfg.riskPct || 2) / 100));
+    sz = Math.min(fixedSize, Math.max(10, safeTotal * (cfg.riskPct || 2) / 100));
+  } else {
+    const wins   = trades.filter(t => t.pnl > 0);
+    const losses = trades.filter(t => t.pnl <= 0);
+    const p    = wins.length / trades.length;
+    const avgW = wins.length   ? wins.reduce((a,t)=>a+t.pnlPct,0)/wins.length/100   : cfg.tp;
+    const avgL = losses.length ? Math.abs(losses.reduce((a,t)=>a+t.pnlPct,0)/losses.length)/100 : cfg.sl;
+    const b    = avgW / (avgL > 0 ? avgL : cfg.sl || 0.04);
+    if (!isFinite(b) || b <= 0) {
+      sz = Math.min(fixedSize, Math.max(10, safeTotal * (cfg.riskPct||2)/100));
+    } else {
+      let kelly = (b * p - (1 - p)) / b;
+      if (kelly <= 0) {
+        sz = Math.min(fixedSize, Math.max(5, safeTotal * 0.02));
+      } else {
+        kelly = Math.min(0.05, kelly * 0.5);
+        sz = Math.max(5, Math.round(safeTotal * kelly * 100) / 100);
+      }
+    }
   }
-  const wins   = trades.filter(t => t.pnl > 0);
-  const losses = trades.filter(t => t.pnl <= 0);
-  const p    = wins.length / trades.length;
-  const avgW = wins.length   ? wins.reduce((a,t)=>a+t.pnlPct,0)/wins.length/100   : cfg.tp;
-  const avgL = losses.length ? Math.abs(losses.reduce((a,t)=>a+t.pnlPct,0)/losses.length)/100 : cfg.sl;
-  const b    = avgW / (avgL > 0 ? avgL : cfg.sl || 0.04);
-  if (!isFinite(b) || b <= 0) return Math.min(fixedSize, Math.max(10, safeTotal * (cfg.riskPct||2)/100));
-  let kelly = (b * p - (1 - p)) / b;
-  if (kelly <= 0) return Math.min(fixedSize, Math.max(5, safeTotal * 0.02));
-  kelly = Math.min(0.05, kelly * 0.5);
-  const sz = Math.max(5, Math.round(safeTotal * kelly * 100) / 100);
-  return Math.min(fixedSize, sz, safeTotal * 0.20);
+  sz = Math.min(fixedSize, sz, safeTotal * 0.20);
+
+  // Normalizacja do realnego SL% tej pozycji wzgledem baseline (cfg.sl) -
+  // clamp x0.5-x1.5, zeby nie doprowadzic do absurdalnie malych/duzych
+  // pozycji przy ekstremalnym ATR (to tylko korekta risk-parity, nie
+  // zamiennik istniejacych limitow: fixedSize, 20% equity, portfolio heat).
+  if (isFinite(slPct) && slPct > 0) {
+    const baselineSl  = cfg.sl || 0.01;
+    const normFactor  = Math.min(1.5, Math.max(0.5, baselineSl / slPct));
+    sz = Math.max(5, Math.round(sz * normFactor * 100) / 100);
+    sz = Math.min(fixedSize, sz, safeTotal * 0.20);
+  }
+  return sz;
 }
 
 // FIX: bufor na spread/poslizg market-orderow na Revolut X byl stala 0.15%
@@ -2106,6 +2161,13 @@ async function revxMarketBuy(sym, quoteSize, cfg) {
 }
 
 // Market SELL — sprzedaje baseSize jednostek (np. BTC)
+// FIX: analogicznie do revxMarketBuy - potwierdz realny fill (average_price +
+// filled_base_size) zamiast zakladac sukces po samym zlozeniu zlecenia.
+// Bez tego SELL zlozony, ale nie wypelniony (blad/reject po stronie gieldy,
+// czesciowy fill), bylby traktowany jak zamknieta pozycja - bot zgubilby
+// sledzenie realnej otwartej ekspozycji i zaksiegowalby PnL wg cudzej,
+// niewykonanej ceny. Lepiej NIE zamykac pozycji w bocie i zglosic to glosno,
+// niz zamknac ja z odgadnietymi danymi.
 async function revxMarketSell(sym, baseQty, cfg) {
   const instrument_code = revxInstrument(sym);
   // Revolut X wymaga precyzji — ogranicz do rozsądnej liczby miejsc po przecinku
@@ -2118,7 +2180,24 @@ async function revxMarketSell(sym, baseQty, cfg) {
   };
   const order = await revxRequest('POST', '/orders', body, cfg);
   if (!order.id) throw new Error('Revolut X sell: brak order.id — ' + JSON.stringify(order));
-  return true;
+
+  let details = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await sleep(1500);
+    try {
+      const d = await revxRequest('GET', '/orders/' + order.id, null, cfg);
+      details = d;
+      if (d && d.average_price && d.filled_base_size) break;
+    } catch(e) { /* sprobuj ponownie */ }
+  }
+
+  const avgPrice  = details && details.average_price ? +details.average_price : 0;
+  const filledQty = details && details.filled_base_size ? +details.filled_base_size : 0;
+  if (!avgPrice || !filledQty) {
+    await tgSend(cfg, '[KRYTYCZNE] Zlecenie SELL ' + order.id + ' (' + sym + ') zlozone na Revolut X, ale bot nie otrzymal average_price/filled_base_size po 3 probach — SPRAWDZ RECZNIE na Revolut X! Pozycja NADAL sledzona przez bota jako otwarta.');
+    throw new Error('Revolut X sell: zlecenie ' + order.id + ' zlozone, ale brak average_price/filled_base_size po 3 probach — pozycja NIE zamknieta (sprawdz recznie!)');
+  }
+  return { price: avgPrice, qty: filledQty, orderId: order.id };
 }
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
@@ -2276,6 +2355,7 @@ function redirectHTML(msg) {
 <style>body{background:#020810;color:#00e5a0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-size:1.4em;flex-direction:column;gap:12px;}</style>
 </head><body><div>${msg}</div><div style="color:#334d74;font-size:0.5em">Przekierowanie za 2 sekundy...</div></body></html>`;
 }
+
 
 
 
