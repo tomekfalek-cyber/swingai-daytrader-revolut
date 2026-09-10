@@ -826,6 +826,13 @@ tr:hover td{background:rgba(123,97,255,.04);}
   <div class="form-row"><label>Bot Token</label><input id="cfg-tg-token" type="password" placeholder="123456:ABC-DEF..."></div>
   <div class="form-row"><label>Chat ID</label><input id="cfg-tg-chat" type="text" placeholder="-100123456"></div>
   <hr style="border-color:var(--border);margin:12px 0;">
+  <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">🔴 <b>Serwer Cloudflare — realny bot (backend)</b></div>
+  <div style="font-size:7.5pt;color:var(--text3);background:var(--bg4);border-radius:5px;padding:6px 8px;margin-bottom:8px;line-height:1.5">Ten dashboard w przegladarce to symulacja PAPER, dziala tylko gdy karta jest otwarta. Realny handel (rowniez LIVE) wykonuje NIEZALEZNY bot na serwerze Cloudflare Worker — dzialajacy wg WLASNEGO stanu, oddzielnie od tego, co widzisz na tym dashboardzie. Przycisk nizej uruchamia go NA CZYSTO (reset historii/pozycji, modele AI zachowane) w trybie LIVE z ustawieniami TP/SL/rozmiaru z tego panelu.</div>
+  <div class="modal-btns"><button onclick="checkServerStatus()">🔍 Sprawdź stan serwera</button></div>
+  <div id="server-status" style="font-size:8.5pt;min-height:16px;margin-bottom:4px"></div>
+  <div class="modal-btns"><button class="stop-btn" onclick="startServerLive()">🔴 START LIVE (serwer, realne pieniądze)</button></div>
+  <div id="start-live-status" style="font-size:8.5pt;min-height:16px;margin-bottom:4px"></div>
+  <hr style="border-color:var(--border);margin:12px 0;">
   <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">🔒 <b>PIN dostępu do panelu</b></div>
   <div class="form-row"><label>Aktualny PIN</label><input id="cfg-pin-old" type="password" inputmode="numeric" maxlength="8" placeholder="8 cyfr"></div>
   <div class="form-row"><label>Nowy PIN</label><input id="cfg-pin-new" type="password" inputmode="numeric" maxlength="8" placeholder="8 cyfr"></div>
@@ -3049,6 +3056,82 @@ async function testConn() {
   try{const pb=(url||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'');const r=await fetchWithTimeout(pb+'/market?path='+encodeURIComponent('/1.0/public/tickers')+'&qs='+encodeURIComponent('symbols=BTC/USDC'),{signal:AbortSignal.timeout(10000)});const d=await r.json();const btc=(d.data||[])[0];lines.push('Revolut X OK | BTC: $'+(btc?(+btc.last_price).toFixed(0):'?'));}catch(e){lines.push('Revolut X ERR: '+e.message);}
   if(url){try{const r=await fetchWithTimeout(url+'/status?auth='+encodeURIComponent(tok),{signal:AbortSignal.timeout(10000)});if(r.ok){const d=await r.json();lines.push('Worker OK | tryb: '+(d.config&&d.config.mode||'?')+' iter: '+(d.state&&d.state.iter||0));if(d.state&&d.state.liveBalance)lines.push('Saldo USDC: $'+d.state.liveBalance.toFixed(2));}else{lines.push('Worker HTTP '+r.status);}}catch(e){lines.push('Worker ERR: '+e.message);}}else{lines.push('Brak Worker URL');}
   s.innerHTML=lines.map(function(l){return (l.indexOf('OK')>=0)?'<span style="color:var(--green)">'+l+'</span>':'<span style="color:var(--red)">'+l+'</span>';}).join('<br>');
+}
+
+// Serwerowy bot (Cloudflare Worker) jest NIEZALEZNY od tego dashboardu -
+// ponizsze dwie funkcje sa jedynym miejscem, gdzie index.html w ogole
+// komunikuje sie z serwerem poza /save-config i /balance. checkServerStatus
+// robi JEDNORAZOWY odczyt (nie polling) - zero dodatkowego obciazenia
+// Cloudflare poza tym jednym klikiem.
+async function checkServerStatus() {
+  const statusEl = gi('server-status');
+  const url = (gi('cfg-worker').value||'').trim().replace(/\/+$/,'');
+  if (!url) { statusEl.innerHTML = '<span style="color:var(--red)">Brak Worker URL</span>'; return; }
+  statusEl.innerHTML = '<span style="color:var(--gold)">Sprawdzam...</span>';
+  try {
+    const r = await fetchWithTimeout(url + '/state-public', 10000);
+    const d = await r.json();
+    const modeLbl = d.active ? (d.mode==='live' ? 'LIVE (aktywny)' : 'PAPER (aktywny)') : 'NIEAKTYWNY';
+    statusEl.innerHTML = '<span style="color:'+(d.active?'var(--green)':'var(--text3)')+'">Serwer: '+modeLbl+' | pozycje: '+((d.positions||[]).length)+' | trejdy: '+((d.trades||[]).length)+' | ostatni skan: '+(d.lastCycle ? new Date(d.lastCycle).toLocaleString() : '-')+'</span>';
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--red)">Blad: '+e.message+'</span>';
+  }
+}
+
+// START LIVE — jednorazowa, jawna akcja uzytkownika (nigdy automatyczna).
+// Przed startem: (1) sprawdza realny stan serwera i blokuje, jesli sa tam
+// otwarte pozycje (zeby ich nie zgubic przy resecie stanu w /start-live),
+// (2) wymaga wypelnionych kluczy Revolut X, (3) jawne potwierdzenie.
+async function startServerLive() {
+  const statusEl = gi('start-live-status');
+  const url  = (gi('cfg-worker').value||'').trim().replace(/\/+$/,'');
+  const tok  = (gi('cfg-auth-token').value||'swingai-revolut-2024').trim();
+  const key  = (gi('cfg-revx-key').value||'').trim();
+  const priv = (gi('cfg-revx-priv').value||'').trim();
+  if (!url)  { statusEl.innerHTML = '<span style="color:var(--red)">Brak Worker URL</span>'; return; }
+  if (!key || !priv) { statusEl.innerHTML = '<span style="color:var(--red)">Wpisz najpierw API Key i Private Key Revolut X</span>'; return; }
+
+  statusEl.innerHTML = '<span style="color:var(--gold)">Sprawdzam stan serwera...</span>';
+  try {
+    const r = await fetchWithTimeout(url + '/state-public', 10000);
+    const d = await r.json();
+    if ((d.positions||[]).length > 0) {
+      statusEl.innerHTML = '<span style="color:var(--red)">Serwer ma '+d.positions.length+' otwartych pozycji — zamknij je najpierw, inaczej zostana zgubione przy resecie stanu. Przerywam.</span>';
+      return;
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--red)">Nie udalo sie sprawdzic stanu serwera ('+e.message+') — przerywam dla bezpieczenstwa.</span>';
+    return;
+  }
+
+  if (!confirm('UWAGA: to uruchamia REALNY handel na Revolut X (prawdziwe pieniadze) na serwerze Cloudflare, z ustawieniami TP/SL/rozmiaru pozycji z tego panelu. Historia/statystyki na serwerze zostana zresetowane (wytrenowane modele AI zostaja zachowane). Kontynuowac?')) return;
+
+  statusEl.innerHTML = '<span style="color:var(--gold)">Startuje LIVE...</span>';
+  try {
+    const params = new URLSearchParams();
+    params.set('auth', tok);
+    params.set('key', key);
+    params.set('priv', priv);
+    params.set('tp', String(parseFloat(gi('cfg-tp').value) || 2));
+    params.set('sl', String(parseFloat(gi('cfg-sl').value) || 1));
+    params.set('trail', String(parseFloat(gi('cfg-trail').value) || 0.8));
+    params.set('score', String(parseInt(gi('cfg-minscore').value) || 58));
+    params.set('maxp', String(parseInt(gi('cfg-maxpos').value) || 4));
+    params.set('size', String(parseFloat(gi('cfg-size').value) || 15));
+    params.set('riskPct', String(parseFloat(gi('cfg-risk').value) || 2));
+    params.set('fgMin', String(parseInt(gi('cfg-fgmin').value) || 20));
+    const tgTok  = (gi('cfg-tg-token').value||'').trim(); if (tgTok)  params.set('tg', tgTok);
+    const tgChat = (gi('cfg-tg-chat').value||'').trim();  if (tgChat) params.set('tgc', tgChat);
+    const r = await fetchWithTimeout(url + '/start-live?' + params.toString(), 15000);
+    if (r.ok) {
+      statusEl.innerHTML = '<span style="color:var(--green)">Serwer LIVE aktywny. Ten dashboard w przegladarce dalej dziala jako niezalezna symulacja PAPER.</span>';
+      log('Serwerowy bot: START LIVE wyslany', 'ok');
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--red)">Blad startu: HTTP '+r.status+'</span>';
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--red)">Blad: '+e.message+'</span>';
+  }
 }
 
 function resetAll() {
