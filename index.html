@@ -812,6 +812,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
   <div class="form-row"><label>Take Profit %</label><input id="cfg-tp" type="number" value="2" step="0.1" min="0.5" max="8"> <small class="lbl">Day trading: 1.5-3%</small></div>
   <div class="form-row"><label>Stop Loss %</label><input id="cfg-sl" type="number" value="1" step="0.1" min="0.3" max="4"> <small class="lbl">Day trading: 0.8-1.5%</small></div>
   <div class="form-row"><label>Trailing Stop %</label><input id="cfg-trail" type="number" value="0.8" step="0.1" min="0.3" max="3"> <small class="lbl">Day trading: 0.6-1.2%</small></div>
+  <div style="font-size:7.5pt;color:var(--text3);background:var(--bg4);border-radius:5px;padding:6px 8px;margin:-2px 0 8px;line-height:1.5">&#9888; Powyzsze TP/SL obowiazuje dla BTC/ETH/SOL/XRP. <b style="color:var(--text2)">PEPE ma wlasny, szerszy override: TP 3,5% / SL 1,8%</b> (wieksza naturalna zmiennosc memecoina — wazszy TP/SL powodowalby zbyt czeste wybijanie SL na normalnym szumie ceny).</div>
   <div class="form-row"><label>Max pozycje</label><input id="cfg-maxpos" type="number" value="4" min="1" max="5"></div>
   <div class="form-row"><label>Rozmiar pozycji $</label><input id="cfg-size" type="number" value="15" min="10" max="10000"></div>
   <div class="form-row"><label>Skan co (minuty)</label><input id="cfg-interval" type="number" value="3" min="3" max="30"></div>
@@ -5091,6 +5092,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </body>
 
 </html>
+
 
 
 
