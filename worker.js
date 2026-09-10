@@ -1,4 +1,4 @@
-// SwingAI Bot 24/7 â€” Cloudflare Worker â€” REVOLUT X VERSION
+// SwingAI Bot 24/7 — Cloudflare Worker — REVOLUT X VERSION
 // Multi-TF DAY TRADING (1H+15min+5min), NB+GBM+QL, SMC, PATTERNS, Kelly, ATR-TP/SL, CORR, OBI
 // Market data: Revolut X public API (revx.revolut.com/api/1.0/public/*) | Execution: Revolut X (Ed25519)
 // Dane i egzekucja z JEDNEJ gieldy (Revolut X) - zero rozjazdu miedzy cena analizy
@@ -8,8 +8,8 @@
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 // KONFIGURACJA
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// Kraken public API â€” nie blokuje CF Workers
-// Pary Kraken: XBTUSDT, ETHUSDT itd. | Handel Revolut X: BTC/USDC â€” mapowanie w revxInstrument()
+// Kraken public API — nie blokuje CF Workers
+// Pary Kraken: XBTUSDT, ETHUSDT itd. | Handel Revolut X: BTC/USDC — mapowanie w revxInstrument()
 // Day trading: mniej par niz w wersji swingowej, bo skan jest 3x czestszy (co 3
 // min zamiast 10) - trzyma budzet zapytan/dzien i limit KV w bezpiecznych granicach
 // mimo wiekszej czestotliwosci. Najbardziej plynne pary, najlepsze dla intraday.
@@ -61,7 +61,7 @@ const PAIR_PARAMS_DEFAULT = {
 const REVX_BASE = 'https://revx.revolut.com/api/1.0';
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// GĹĂ“WNY HANDLER
+// GŁÓWNY HANDLER
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 export default {
   async scheduled(event, env, ctx) {
@@ -122,7 +122,7 @@ export default {
 
     if (url.pathname === '/change-pin' && request.method === 'POST') {
       const sessionOk = await isValidSession(env, request);
-      if (!sessionOk) return pinJsonResp({ ok:false, error:'Sesja wygasla â€” zaloguj sie ponownie' }, 401, request);
+      if (!sessionOk) return pinJsonResp({ ok:false, error:'Sesja wygasla — zaloguj sie ponownie' }, 401, request);
       const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
       const rl = await checkPinRateLimit(env, ip);
       if (rl.blocked) return pinJsonResp({ ok:false, error:'Za wiele nieudanych prob. Sprobuj za 15 minut.' }, 429, request);
@@ -147,7 +147,7 @@ export default {
     // config (klucze API, PIN) - tylko historii/statystyk/modeli.
     if (url.pathname === '/clear-stats' && request.method === 'POST') {
       const sessionOk = await isValidSession(env, request);
-      if (!sessionOk) return pinJsonResp({ ok:false, error:'Sesja wygasla â€” zaloguj sie ponownie' }, 401, request);
+      if (!sessionOk) return pinJsonResp({ ok:false, error:'Sesja wygasla — zaloguj sie ponownie' }, 401, request);
       const cfg = await getConfig(env);
       const state = await getState(env);
       state.trades = [];
@@ -179,7 +179,7 @@ export default {
       );
     }
 
-    // State public â€” dla GitHub Pages dashboard
+    // State public — dla GitHub Pages dashboard
     if (url.pathname === '/state-public') {
       const cfg   = await getConfig(env);
       const state = await getState(env);
@@ -231,7 +231,7 @@ export default {
       cfg.fgMin    = parseInt(p.get('fgMin')|| '20');
       cfg.tgToken  = p.get('tg')   || '';
       cfg.tgChat   = p.get('tgc')  || '';
-      // JeĹ›li klucze puste - zachowaj z poprzedniej konfiguracji
+      // Jeśli klucze puste - zachowaj z poprzedniej konfiguracji
       const oldCfg = await getConfig(env);
       if (!cfg.revxApiKey  && oldCfg.revxApiKey)  cfg.revxApiKey  = oldCfg.revxApiKey;
       if (!cfg.revxPrivKey && oldCfg.revxPrivKey) cfg.revxPrivKey = oldCfg.revxPrivKey;
@@ -284,9 +284,9 @@ export default {
     if (url.pathname === '/run') {
       const cfg = await getConfig(env);
       if (!cfg.active)
-        return new Response(redirectHTML('Bot nieaktywny â€” uruchom najpierw'), { headers: {'Content-Type':'text/html;charset=utf-8'} });
+        return new Response(redirectHTML('Bot nieaktywny — uruchom najpierw'), { headers: {'Content-Type':'text/html;charset=utf-8'} });
       ctx.waitUntil(runBotCycle(env));
-      return new Response(redirectHTML('Skan uruchomiony! WrĂłÄ‡ za 30 sekund...'), { headers: {'Content-Type':'text/html;charset=utf-8'} });
+      return new Response(redirectHTML('Skan uruchomiony! Wróć za 30 sekund...'), { headers: {'Content-Type':'text/html;charset=utf-8'} });
     }
 
     if (url.pathname === '/status') {
@@ -315,7 +315,7 @@ export default {
       if (!cfg.tgToken || !cfg.tgChat) return jsonResp({ ok: false, error: 'Brak tokenu Telegram' });
       let msg = '';
       try { const body = await request.json(); msg = body.text || ''; } catch(e) { msg = url.searchParams.get('text') || ''; }
-      if (!msg) return jsonResp({ ok: false, error: 'Brak treĹ›ci wiadomoĹ›ci' });
+      if (!msg) return jsonResp({ ok: false, error: 'Brak treści wiadomości' });
       try {
         const tgR = await fetchWithTimeout('https://api.telegram.org/bot' + cfg.tgToken + '/sendMessage', 8000, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -328,7 +328,7 @@ export default {
 
     if (url.pathname === '/tg-test') {
       const cfg = await getConfig(env);
-      const payload = { chat_id: cfg.tgChat, text: 'SwingAI Revolut X â€” test', parse_mode: 'HTML' };
+      const payload = { chat_id: cfg.tgChat, text: 'SwingAI Revolut X — test', parse_mode: 'HTML' };
       const tgUrl = 'https://api.telegram.org/bot' + cfg.tgToken + '/sendMessage';
       let tgResult;
       try {
@@ -350,7 +350,7 @@ export default {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: cfg.tgChat,
-              text: 'Witaj! SwingAI Bot 24/7 â€” Revolut X aktywny.\n\nPolaczenie dziala.\nPary: BTC ETH SOL XRP PEPE\nSkany co 3 min przez Cloudflare Worker.',
+              text: 'Witaj! SwingAI Bot 24/7 — Revolut X aktywny.\n\nPolaczenie dziala.\nPary: BTC ETH SOL XRP PEPE\nSkany co 3 min przez Cloudflare Worker.',
               parse_mode: 'HTML'
             })
           }
@@ -363,11 +363,11 @@ export default {
     }
 
 
-    // Proxy dla wykresow dashboard â€” dane z Bybit v5 (Revolut X /public/candles i
+    // Proxy dla wykresow dashboard — dane z Bybit v5 (Revolut X /public/candles i
     // /public/order-book wymagaja auth mimo nazwy "public", zweryfikowane 2026-09-02:
     // HTTP 401 "Unauthenticated access"; dziala bez klucza tylko /public/tickers).
     // Frontend (index.html) nadal wysyla "stare", Revolut-podobne sciezki/parametry
-    // (np. path=/1.0/public/candles/BTC/USDC) â€” ZERO zmian w index.html; ten proxy
+    // (np. path=/1.0/public/candles/BTC/USDC) — ZERO zmian w index.html; ten proxy
     // tlumaczy je na realne zapytania Bybit i przeksztalca odpowiedz z powrotem do
     // ksztaltu JSON, ktorego juz oczekuje istniejacy kod klienta (getKlines/getTicker/
     // OBI.fetch w index.html) - stad brak potrzeby dotykania frontendu.
@@ -425,26 +425,26 @@ export default {
     }
 
     // Fallback
-    return new Response('SwingAI Revolut X Worker â€” OK', { headers: corsHeaders() });
+    return new Response('SwingAI Revolut X Worker — OK', { headers: corsHeaders() });
   }
 };
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// GĹĂ“WNA LOGIKA CYKLU
+// GŁÓWNA LOGIKA CYKLU
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 async function runBotCycle(env) {
   const cfg   = await getConfig(env);
   if (!cfg.active) return;
   const state = await getState(env);
 
-  // Mutex â€” zapobiega rĂłwnolegĹ‚emu uruchomieniu dwĂłch cykli.
-  // UWAGA: TTL musi byÄ‡ bezpiecznie dĹ‚uĹĽszy niĹĽ realistyczny NAJGORSZY (ale wciÄ…ĹĽ
-  // normalny, nie zawieszony) czas 1 cyklu. Przy 8 parach x kilka interwaĹ‚Ăłw klines
-  // x timeout + sleep(700ms) miÄ™dzy parami + podpisywanie Ed25519 dla Revolut X,
-  // cykl w wolnych warunkach sieciowych moĹĽe zajÄ…Ä‡ kilka minut. Zbyt krĂłtki TTL
-  // (poprzednio 120s) mĂłgĹ‚ zwalniaÄ‡ blokadÄ™ zanim poprzedni cykl faktycznie siÄ™
-  // skoĹ„czyĹ‚, pozwalajÄ…c na nakĹ‚adanie siÄ™ cykli â€” dokĹ‚adnie problem, ktĂłremu ta
-  // blokada ma zapobiegaÄ‡.
+  // Mutex — zapobiega równoległemu uruchomieniu dwóch cykli.
+  // UWAGA: TTL musi być bezpiecznie dłuższy niż realistyczny NAJGORSZY (ale wciąż
+  // normalny, nie zawieszony) czas 1 cyklu. Przy 8 parach x kilka interwałów klines
+  // x timeout + sleep(700ms) między parami + podpisywanie Ed25519 dla Revolut X,
+  // cykl w wolnych warunkach sieciowych może zająć kilka minut. Zbyt krótki TTL
+  // (poprzednio 120s) mógł zwalniać blokadę zanim poprzedni cykl faktycznie się
+  // skończył, pozwalając na nakładanie się cykli — dokładnie problem, któremu ta
+  // blokada ma zapobiegać.
   const lockKey = 'bot_running_lock';
   const lockVal = await env.SWINGAI_REVOLUT_KV.get(lockKey);
   if (lockVal) {
@@ -470,7 +470,7 @@ async function runBotCycle(env) {
     ? (state.liveBalance > 0 ? state.liveBalance : (cfg.paperBalance || 1000))
     : (state.paperBalance > 0 ? state.paperBalance : (cfg.paperBalance || 1000));
 
-  // peakBalanceMode fix: nie myl paper-peak z live-peak po przeĹ‚Ä…czeniu trybu
+  // peakBalanceMode fix: nie myl paper-peak z live-peak po przełączeniu trybu
   if (state.peakBalanceMode && state.peakBalanceMode !== cfg.mode) {
     state.peakBalance = 0;
     state.peakBalanceMode = cfg.mode;
@@ -486,10 +486,10 @@ async function runBotCycle(env) {
     // Day trading: 6h zamiast 24h (swing) - wciaz znaczaca pauza po powaznym
     // drawdown, ale nie blokujaca praktycznie calego nastepnego dnia handlowego.
     state.drawdownBlock = Date.now() + 6 * 3600000;
-    addLog(state, 'Circuit breaker: -15% drawdown â€” blokada BUY 6h', 'err');
+    addLog(state, 'Circuit breaker: -15% drawdown — blokada BUY 6h', 'err');
   }
 
-  // ZaĹ‚aduj modele AI
+  // Załaduj modele AI
   const nb  = makeNB(state.nb);
   const gbm = makeGBM(state.gbm);
   const ql  = makeQL(state.ql);
@@ -503,9 +503,9 @@ async function runBotCycle(env) {
 
     // 2. BTC Guard
     const btcDrop = await btcDropGuard();
-    if (btcDrop) addLog(state, 'BTC Guard aktywny â€” brak nowych long na altcoinach', 'warn');
+    if (btcDrop) addLog(state, 'BTC Guard aktywny — brak nowych long na altcoinach', 'warn');
 
-    // 3. SprawdĹş otwarte pozycje
+    // 3. Sprawdź otwarte pozycje
     await checkPositions(cfg, state, env, ql);
 
     // 4. Skanuj pary
@@ -536,11 +536,11 @@ async function runBotCycle(env) {
     const dailyLossOk = (state.dailyPnl || 0) > -0.05 * dailyBase;
 
     if (fg.val < 15) {
-      addLog(state, 'F&G=' + fg.val + ' (ekstremalna panika) â€” blokada BUY', 'warn');
+      addLog(state, 'F&G=' + fg.val + ' (ekstremalna panika) — blokada BUY', 'warn');
     } else if (!dailyLossOk) {
       addLog(state, 'Dzienny limit strat przekroczony (-5% od $' + dailyBase.toFixed(0) + ')', 'err');
     } else if ((state.drawdownBlock || 0) > Date.now()) {
-      addLog(state, 'Circuit breaker aktywny â€” brak nowych pozycji', 'warn');
+      addLog(state, 'Circuit breaker aktywny — brak nowych pozycji', 'warn');
     } else {
       for (const sig of sigs) {
         if ((state.positions || []).length >= cfg.maxPos) break;
@@ -585,7 +585,7 @@ async function runBotCycle(env) {
     if (cfg.mode === 'live' && cfg.revxApiKey && cfg.revxPrivKey) {
       try {
         state.liveBalance = await revxGetBalance(cfg);
-      } catch(e) { /* zachowaj poprzedniÄ… wartoĹ›Ä‡ */ }
+      } catch(e) { /* zachowaj poprzednią wartość */ }
     }
 
     state.lastCycle = Date.now();
@@ -603,7 +603,7 @@ async function runBotCycle(env) {
 }
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// ANALIZA TECHNICZNA â€” MULTI-TF
+// ANALIZA TECHNICZNA — MULTI-TF
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 function calcVWAP(highs, lows, closes, volumes) {
   const n = Math.min(50, highs.length);
@@ -617,7 +617,7 @@ function calcVWAP(highs, lows, closes, volumes) {
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// SMART MONEY CONCEPTS (SMC) â€” day trading
+// SMART MONEY CONCEPTS (SMC) — day trading
 // Mechaniczna, kodowalna interpretacja koncepcji SMC. To NIE jest gwarancja
 // takiej skutecznosci jak u doswiadczonego tradera SMC - to precyzyjne,
 // powtarzalne reguly inspirowane tymi koncepcjami, nie ich pelne odwzorowanie
@@ -784,7 +784,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const d = pk(kd), h4 = pk(k4h), h1 = pk(k1h);
   const price = d.c.at(-1);
 
-  // WskaĹşniki 1H
+  // Wskaźniki 1H
   const rsiD   = rsi(d.c, 14);
   const macdD  = macdFull(d.c);
   const bbD    = bband(d.c, 20);
@@ -795,11 +795,11 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const srLevels = calcSRLevels(d.h, d.l, price);
   const regime = detectRegime(d.c, atrD, ema50, ema200);
 
-  // WskaĹşniki 4H
+  // Wskaźniki 4H
   const rsi4h  = rsi(h4.c, 14);
   const macd4h = macdFull(h4.c);
 
-  // WskaĹşniki 1H
+  // Wskaźniki 1H
   const rsi1h  = rsi(h1.c, 14);
   const macd1h = macdFull(h1.c);
   const confirm1h = macd1h.hist > 0 && rsi1h < 55;
@@ -846,12 +846,12 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   if      (bbD.pos < 0.08) { score += 18; why.push('Cena przy dolnej BB'); }
   else if (bbD.pos < 0.20) { score += 13; why.push('BB dolna strefa'); }
   else if (bbD.pos < 0.35) { score += 6; }
-  else if (bbD.pos > 0.85) { score -= 10; why.push('BB gorna â€” ryzyko'); }
+  else if (bbD.pos > 0.85) { score -= 10; why.push('BB gorna — ryzyko'); }
 
-  if      (trendD === 2)  { score += 12; why.push('Ponad EMA50+200 â€” bull'); }
+  if      (trendD === 2)  { score += 12; why.push('Ponad EMA50+200 — bull'); }
   else if (trendD === 1)  { score += 8;  why.push('Ponad EMA200'); }
   else if (trendD === 0)  { score += 3; }
-  else                    { score -= 20; why.push('Ponizej EMA200 â€” bessa'); }
+  else                    { score -= 20; why.push('Ponizej EMA200 — bessa'); }
 
   if      (mom5 > 0 && mom10 < 0)    { score += 8; why.push('Momentum odwrocenie'); }
   else if (mom5 < -5 && mom10 < -10) { score += 5; why.push('Oversold momentum'); }
@@ -998,7 +998,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     (volR > 1.3 || vol4R > 1.3)
   ].filter(Boolean).length;
   if (finalProb >= minScore / 100 && confluence < 2) {
-    why.push('Score OK, ale brak confluence (' + confluence + '/4 rodzin sygnalow) â€” wejscie odrzucone');
+    why.push('Score OK, ale brak confluence (' + confluence + '/4 rodzin sygnalow) — wejscie odrzucone');
   }
 
   const buy = finalProb >= minScore / 100 && confluence >= 2 && !bearBias;
@@ -1048,12 +1048,12 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
 }
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// ZARZÄ„DZANIE POZYCJAMI
+// ZARZĄDZANIE POZYCJAMI
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 async function checkPositions(cfg, state, env, ql) {
   const updated = [];
   for (const pos of (state.positions || [])) {
-    // FIX 6: jeĹ›li pozycja jest juĹĽ w trakcie zamykania â€” nie wysyĹ‚aj kolejnego SELL
+    // FIX 6: jeśli pozycja jest już w trakcie zamykania — nie wysyłaj kolejnego SELL
     if (pos.closing) { updated.push(pos); continue; }
     try {
       const price = await getLastPrice(pos.sym);
@@ -1077,7 +1077,7 @@ async function checkPositions(cfg, state, env, ql) {
       else if (price <= (pos.partialClosed ? pos.sl : (pos.sl > 0 ? pos.sl : pos.entry * (1 - cfg.sl)))) reason = 'STOP LOSS';
       else if (price <= trail && pnlPct > 1.5)               reason = 'TRAILING STOP';
 
-      // Partial TP (50% pozycji przy poĹ‚owie TP)
+      // Partial TP (50% pozycji przy połowie TP)
       const _tpPct = pos.tp > 0 ? (pos.tp - pos.entry) / pos.entry * 100 : cfg.tp * 100;
       if (!reason && pnlPct >= _tpPct * 0.5 && !pos.partialClosed && !pos.partialSelling) {
         pos.partialSelling = true;
@@ -1096,7 +1096,7 @@ async function checkPositions(cfg, state, env, ql) {
           if (cfg.mode === 'paper') {
             state.paperBalance = (state.paperBalance || 0) + halfSize + halfPnl;
           }
-          addLog(state, 'PARTIAL TP ' + pos.sym + ' +$' + halfPnl.toFixed(2) + ' (' + pnlPct.toFixed(1) + '%) â€” reszta jedzie dalej', 'ok');
+          addLog(state, 'PARTIAL TP ' + pos.sym + ' +$' + halfPnl.toFixed(2) + ' (' + pnlPct.toFixed(1) + '%) — reszta jedzie dalej', 'ok');
         } catch(e) {
           pos.partialSelling = false;
           addLog(state, 'Partial TP SELL error: ' + e.message, 'err');
@@ -1104,14 +1104,14 @@ async function checkPositions(cfg, state, env, ql) {
       }
 
       if (reason) {
-        // FIX 6: ustaw flagÄ™ closing przed wywoĹ‚aniem closePosition
+        // FIX 6: ustaw flagę closing przed wywołaniem closePosition
         pos.closing = true;
         const closed = await closePosition(pos, price, reason, cfg, state, ql);
         if (closed === false) {
-          pos.closing = false; // reset przy bĹ‚Ä™dzie
+          pos.closing = false; // reset przy błędzie
           updated.push(pos);
         }
-        // sukces â€” nie wracaj pozycji do listy
+        // sukces — nie wracaj pozycji do listy
       } else {
         updated.push(pos);
       }
@@ -1136,9 +1136,9 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   const pp0 = (state.pairParams||{})[sig.sym] || PAIR_PARAMS_DEFAULT[sig.sym];
   const effMinScore = pp0 ? pp0.minScore : (state.adaptiveMinScore || cfg.minScore);
   const pumpReason = isPumpDump(sig);
-  if (pumpReason) { addLog(state, 'Pump/dump guard (' + pumpReason + '): ' + sig.sym + ' â€” pomijam', 'warn'); return; }
-  if (isVolumeAnomaly(sig, effMinScore)) { addLog(state, 'Vol anomaly: ' + sig.sym + ' vol=' + sig.volR.toFixed(2) + 'x â€” pomijam', 'warn'); return; }
-  if (isDeadHour()) { addLog(state, 'Dead hour (01-05 UTC): ' + sig.sym + ' â€” pomijam', 'warn'); return; }
+  if (pumpReason) { addLog(state, 'Pump/dump guard (' + pumpReason + '): ' + sig.sym + ' — pomijam', 'warn'); return; }
+  if (isVolumeAnomaly(sig, effMinScore)) { addLog(state, 'Vol anomaly: ' + sig.sym + ' vol=' + sig.volR.toFixed(2) + 'x — pomijam', 'warn'); return; }
+  if (isDeadHour()) { addLog(state, 'Dead hour (01-05 UTC): ' + sig.sym + ' — pomijam', 'warn'); return; }
 
   if (btcDrop && sig.sym !== 'XBTUSDT') {
     addLog(state, 'BTC Guard: pomijam ' + sig.sym, 'warn'); return;
@@ -1152,7 +1152,7 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
     const newProb = Math.max(0, sig.finalProb - 0.10);
     adjSig = Object.assign({}, sig, { finalProb: newProb, score: Math.max(0, sig.score - 10) });
     if (adjSig.finalProb < effMinScore / 100) {
-      addLog(state, 'F&G=' + fg.val + ' â€” po karze za slaby score pomijam ' + sig.sym, 'warn'); return;
+      addLog(state, 'F&G=' + fg.val + ' — po karze za slaby score pomijam ' + sig.sym, 'warn'); return;
     }
   }
 
@@ -1161,7 +1161,7 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   const micro    = isMicroAccount(total);
 
   if (micro && (state.positions || []).length >= 1) {
-    addLog(state, 'Micro konto â€” czekam na zamkniecie obecnej pozycji', 'warn'); return;
+    addLog(state, 'Micro konto — czekam na zamkniecie obecnej pozycji', 'warn'); return;
   }
 
   if (!micro) {
@@ -1173,7 +1173,7 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
     }, 0);
     const portfolioHeat = totalRisk / (total > 0 ? total : 1);
     if (portfolioHeat > 0.10) {
-      addLog(state, 'Portfolio heat >10% â€” blokada (' + (portfolioHeat*100).toFixed(1) + '%)', 'warn');
+      addLog(state, 'Portfolio heat >10% — blokada (' + (portfolioHeat*100).toFixed(1) + '%)', 'warn');
       return;
     }
   }
@@ -1181,7 +1181,7 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   const posSize = kellySize(cfg, state, total);
   const minSize = micro ? 1 : 10;
   if (posSize < minSize) {
-    addLog(state, 'Za mala pozycja (' + posSize.toFixed(2) + '$) â€” pomijam ' + sig.sym, 'warn'); return;
+    addLog(state, 'Za mala pozycja (' + posSize.toFixed(2) + '$) — pomijam ' + sig.sym, 'warn'); return;
   }
   const pp     = pp0;
   const levels = calcDynamicLevels(adjSig.price, adjSig.atrD, cfg, pp, adjSig.spreadPct);
@@ -1227,7 +1227,7 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   const _pairName = adjSig.sym.replace('XBT','BTC').replace('USDT','').replace('USDC','');
   const _modeLabel = cfg.mode === 'live' ? 'LIVE (Revolut X)' : 'PAPER (symulacja)';
   await tgSend(cfg,
-    'SYGNAL KUPNA â€” ' + _pairName + '\n\n' +
+    'SYGNAL KUPNA — ' + _pairName + '\n\n' +
     'Cena wejscia: $' + fmtPrice(adjSig.price) + '\n' +
     'Rozmiar pozycji: $' + posSize.toFixed(2) + ' (Kelly)\n' +
     'Take Profit: $' + fmtPrice(levels.tp) + '\n' +
@@ -1278,7 +1278,7 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
     state.cooldown[pos.sym] = Date.now() + 60 * 60000;
     if (state.consLoss >= 3) {
       state.globalBlockUntil = Date.now() + 90 * 60000; // bylo: 4 straty -> 1h
-      addLog(state, '3 straty z rzedu â€” blokada 90 min', 'err');
+      addLog(state, '3 straty z rzedu — blokada 90 min', 'err');
     }
   } else {
     state.consLoss = 0;
@@ -1312,7 +1312,7 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
     reason === 'TRAILING STOP' ? 'STOP KROCZACY' :
     reason === 'TIMEOUT 8h' ? 'KONIEC CZASU (8h)' : reason;
   await tgSend(cfg,
-    (pnl>=0?'[+]':'[-]') + ' ' + _reasonPL + ' â€” ' + _closeSym + '\n\n' +
+    (pnl>=0?'[+]':'[-]') + ' ' + _reasonPL + ' — ' + _closeSym + '\n\n' +
     'Wynik: ' + (pnl>=0?'+':'') + '$' + pnl.toFixed(2) + ' (' + pnlPct.toFixed(2) + '%)\n' +
     'Czas trwania: ' + durH + 'h\n' +
     'Score wejscia: ' + pos.score + '/100\n' +
@@ -1332,7 +1332,7 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
 // (pierwiastek czasu jako przyblizenie skalowania zmiennosci w czasie) - ten sam
 // mechanizm dziala automatycznie dla kazdego instrumentu/rezimu zmiennosci bez
 // recznego przeliczania progow per-symbol. Mnozniki (3.5x) to punkt startowy do
-// kalibracji na realnych danych/backteĹ›cie, nie ostateczna wartosc.
+// kalibracji na realnych danych/backteście, nie ostateczna wartosc.
 function isPumpDump(sig) {
   const atrPct = (sig.atrD && sig.price) ? (sig.atrD / sig.price) * 100 : 0.5;
   const vol4Thresh  = 4.0;
@@ -1456,7 +1456,7 @@ function computeAdaptiveMinScore(trades, baseMin) {
 }
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// FORMACJE ĹšWIECOWE
+// FORMACJE ŚWIECOWE
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 const PATTERNS = {
   detect(closes, opens, highs, lows) {
@@ -1518,7 +1518,7 @@ const PATTERNS = {
 };
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// MODUĹY AI/ML
+// MODUŁY AI/ML
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 // FIX: rebalancing liczyl wagi WYLACZNIE z trafnosci (accuracy) - to ignoruje
 // asymetrie wygranych/strat. Komponent moze miec 55% trafnosci, ale przegrywac
@@ -1677,7 +1677,7 @@ function makeGBM(saved) {
       if (X.length < 20) return false;
       const si = Math.floor(X.length*0.7);
       // train = najstarsze 70% (chronologicznie pierwsze), OOS = najnowsze 30% (nieznane podczas treningu)
-      // trades posortowane najnowszyâ†’najstarszy, wiÄ™c X[0]=najnowszy â†’ slice(si) = stare, slice(0,si) = nowe
+      // trades posortowane najnowszy→najstarszy, więc X[0]=najnowszy → slice(si) = stare, slice(0,si) = nowe
       const Xt=X.slice(si), yt=y.slice(si);
       const Xoos=X.slice(0,si), yoos=y.slice(0,si);
       this.trees=[];
@@ -1761,7 +1761,7 @@ function makeQL(saved) {
 }
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// WSKAĹąNIKI TECHNICZNE
+// WSKAŹNIKI TECHNICZNE
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 function emaArr(arr, p) {
   if (!arr||!arr.length) return [0];
@@ -1866,7 +1866,7 @@ function atr(h, l, c, p=14) {
 }
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// MARKET DATA â€” BYBIT V5 (public, no auth) â€” https://api.bybit.com
+// MARKET DATA — BYBIT V5 (public, no auth) — https://api.bybit.com
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 // Revolut X /public/candles i /public/order-book okazaly sie mimo nazwy "public"
 // WYMAGAC autoryzacji (HTTP 401 "Unauthenticated access", zweryfikowane empirycznie
@@ -1975,7 +1975,7 @@ async function getFearGreed(state) {
 }
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// REVOLUT X TRADING â€” Ed25519 signing
+// REVOLUT X TRADING — Ed25519 signing
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 
 // Mapuj XBTUSDT (Kraken) â†’ BTC/USDC (format Revolut X handel)
@@ -1986,11 +1986,11 @@ function revxInstrument(sym) {
 // Wczytaj Ed25519 PKCS8 PEM klucz prywatny
 async function revxImportKey(privKeyB64OrPem) {
   let pem = privKeyB64OrPem;
-  // JeĹ›li to base64 bez nagĹ‚Ăłwka PEM â€” dodaj nagĹ‚Ăłwek
+  // Jeśli to base64 bez nagłówka PEM — dodaj nagłówek
   if (!pem.includes('-----BEGIN')) {
     pem = '-----BEGIN PRIVATE KEY-----\n' + pem + '\n-----END PRIVATE KEY-----';
   }
-  // UsuĹ„ nagĹ‚Ăłwki i whitespace, zdekoduj base64 â†’ ArrayBuffer
+  // Usuń nagłówki i whitespace, zdekoduj base64 → ArrayBuffer
   const b64 = pem
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
@@ -2007,14 +2007,14 @@ async function revxImportKey(privKeyB64OrPem) {
   );
 }
 
-// Podpisz wiadomoĹ›Ä‡ Ed25519, zwrĂłÄ‡ base64
+// Podpisz wiadomość Ed25519, zwróć base64
 async function revxSign(message, privKey) {
   const msgBuf = new TextEncoder().encode(message);
   const sigBuf = await crypto.subtle.sign({ name: 'Ed25519' }, privKey, msgBuf);
   return btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
 }
 
-// Wykonaj zapytanie do Revolut X API z odpowiednimi nagĹ‚Ăłwkami
+// Wykonaj zapytanie do Revolut X API z odpowiednimi nagłówkami
 async function revxRequest(method, path, body, cfg) {
   const timestamp = String(Date.now());
   // Signature message: "${timestamp}.${METHOD}.${path}${body ? '.' + JSON.stringify(body) : ''}"
@@ -2024,7 +2024,7 @@ async function revxRequest(method, path, body, cfg) {
   try {
     privKey = await revxImportKey(cfg.revxPrivKey);
   } catch(e) {
-    throw new Error('Revolut X: nieprawidlowy klucz prywatny â€” ' + e.message);
+    throw new Error('Revolut X: nieprawidlowy klucz prywatny — ' + e.message);
   }
 
   const signature = await revxSign(sigMsg, privKey);
@@ -2067,7 +2067,7 @@ async function revxGetBalance(cfg) {
   throw lastErr;
 }
 
-// Market BUY â€” kupuje za quoteSize USDC
+// Market BUY — kupuje za quoteSize USDC
 async function revxMarketBuy(sym, quoteSize, cfg) {
   const instrument_code = revxInstrument(sym);
   const body = {
@@ -2077,7 +2077,7 @@ async function revxMarketBuy(sym, quoteSize, cfg) {
     quote_size: quoteSize.toFixed(2)
   };
   const order = await revxRequest('POST', '/orders', body, cfg);
-  if (!order.id) throw new Error('Revolut X buy: brak order.id â€” ' + JSON.stringify(order));
+  if (!order.id) throw new Error('Revolut X buy: brak order.id — ' + JSON.stringify(order));
 
   // FIX: probuj kilka razy pobrac potwierdzone szczegoly zlecenia (average_price +
   // filled_base_size), zamiast po jednej nieudanej probie zgadywac filledQty jako
@@ -2099,16 +2099,16 @@ async function revxMarketBuy(sym, quoteSize, cfg) {
   const avgPrice  = details && details.average_price ? +details.average_price : 0;
   const filledQty = details && details.filled_base_size ? +details.filled_base_size : 0;
   if (!avgPrice || !filledQty) {
-    await tgSend(cfg, '[KRYTYCZNE] Zlecenie BUY ' + order.id + ' (' + sym + ') zlozone na Revolut X, ale bot nie otrzymal average_price/filled_base_size po 3 probach â€” SPRAWDZ RECZNIE na Revolut X! Pozycja NIE jest sledzona przez bota.');
-    throw new Error('Revolut X buy: zlecenie ' + order.id + ' zlozone, ale brak average_price/filled_base_size po 3 probach â€” pozycja NIE zapisana (sprawdz recznie!)');
+    await tgSend(cfg, '[KRYTYCZNE] Zlecenie BUY ' + order.id + ' (' + sym + ') zlozone na Revolut X, ale bot nie otrzymal average_price/filled_base_size po 3 probach — SPRAWDZ RECZNIE na Revolut X! Pozycja NIE jest sledzona przez bota.');
+    throw new Error('Revolut X buy: zlecenie ' + order.id + ' zlozone, ale brak average_price/filled_base_size po 3 probach — pozycja NIE zapisana (sprawdz recznie!)');
   }
   return { price: avgPrice, qty: filledQty, orderId: order.id };
 }
 
-// Market SELL â€” sprzedaje baseSize jednostek (np. BTC)
+// Market SELL — sprzedaje baseSize jednostek (np. BTC)
 async function revxMarketSell(sym, baseQty, cfg) {
   const instrument_code = revxInstrument(sym);
-  // Revolut X wymaga precyzji â€” ogranicz do rozsÄ…dnej liczby miejsc po przecinku
+  // Revolut X wymaga precyzji — ogranicz do rozsądnej liczby miejsc po przecinku
   const baseSizeStr = baseQty.toFixed(8).replace(/\.?0+$/, '') || '0';
   const body = {
     instrument_code,
@@ -2117,7 +2117,7 @@ async function revxMarketSell(sym, baseQty, cfg) {
     base_size: baseSizeStr
   };
   const order = await revxRequest('POST', '/orders', body, cfg);
-  if (!order.id) throw new Error('Revolut X sell: brak order.id â€” ' + JSON.stringify(order));
+  if (!order.id) throw new Error('Revolut X sell: brak order.id — ' + JSON.stringify(order));
   return true;
 }
 
@@ -2136,7 +2136,7 @@ async function tgSend(cfg, msg) {
 }
 
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// PIN GATE â€” HELPERY (sesje, hash, rate-limit, CORS z credentials)
+// PIN GATE — HELPERY (sesje, hash, rate-limit, CORS z credentials)
 // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 async function sha256Hex(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
@@ -2208,9 +2208,9 @@ async function getState(env) {
 function defaultConfig() {
   return {
     active: false, mode: 'paper',
-    // Day trading: duĹĽo ciaĹ›niejsze poziomy niĹĽ w wersji swingowej (tam 12%/5%/6%) -
-    // pozycje trzymane w ciÄ…gu jednego dnia, nie tygodni, wiÄ™c oczekiwany ruch ceny
-    // jest odpowiednio mniejszy. WartoĹ›ci startowe, do kalibracji na realnych danych.
+    // Day trading: dużo ciaśniejsze poziomy niż w wersji swingowej (tam 12%/5%/6%) -
+    // pozycje trzymane w ciągu jednego dnia, nie tygodni, więc oczekiwany ruch ceny
+    // jest odpowiednio mniejszy. Wartości startowe, do kalibracji na realnych danych.
     tp: 0.02, sl: 0.01, trail: 0.008,
     maxPos: 4, posSize: 15, riskPct: 2,
     paperBalance: 1000, minScore: 62, fgMin: 20,

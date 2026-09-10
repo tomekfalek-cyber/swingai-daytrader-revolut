@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pl">
 <head>
 <meta charset="UTF-8">
@@ -622,7 +622,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
     </div>
 
     <!-- ZLECENIA REVOLUT X -->
-    <div id="tab-orders" class="tab-pane" style="padding:12px;overflow-y:auto;"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div class="sec-t" style="margin:0">&#128203; Zlecenia Revolut X</div><button onclick="fetchRevolutOrders()" style="padding:3px 10px;font-size:8pt">&#128260; Odswież</button><span style="font-size:8pt;color:var(--text3)" id="orders-last-update">Nigdy nie pobierano</span></div><div style="background:rgba(123,97,255,.06);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:8.5pt;color:var(--gold);">&#9888; Bot zarządza TYLKO kryptowalutami (BTC, ETH, SOL, XRP vs USDC) — mniej par niż w wersji swingowej, bo szybszy skan (co 3 min) day tradingu wymaga bezpiecznego budżetu zapytań. Akcje, ETF i surowce <b>NIE są wyświetlane ani dotykane</b>.</div><div class="sec-t" style="margin-bottom:8px">&#128188; Saldo krypto</div><div id="revx-balances" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"><div style="color:var(--text3);font-size:9pt">Odswież aby pobrać salda</div></div><div class="sec-t" style="margin-bottom:8px">&#128204; Aktywne zlecenia krypto</div><div style="overflow-x:auto;margin-bottom:16px;"><table><thead><tr><th>Para</th><th>Strona</th><th>Typ</th><th>Cena</th><th>Ilosc</th><th>Wartosc</th><th>Status</th><th>Czas</th><th>Akcja</th></tr></thead><tbody id="open-orders-body"><tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">Brak danych</td></tr></tbody></table></div><div class="sec-t" style="margin-bottom:8px">&#128220; Historia zleceń krypto (ostatnie 20)</div><div style="overflow-x:auto;"><table><thead><tr><th>Para</th><th>Strona</th><th>Typ</th><th>Cena avg</th><th>Ilosc</th><th>Wartosc</th><th>Status</th><th>Czas</th></tr></thead><tbody id="order-history-body"><tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text3)">Brak danych</td></tr></tbody></table></div></div>
+    <div id="tab-orders" class="tab-pane" style="padding:12px;overflow-y:auto;"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div class="sec-t" style="margin:0">&#128203; Zlecenia Revolut X</div><button onclick="fetchRevolutOrders()" style="padding:3px 10px;font-size:8pt">&#128260; Odswież</button><span style="font-size:8pt;color:var(--text3)" id="orders-last-update">Nigdy nie pobierano</span></div><div style="background:rgba(123,97,255,.06);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:8.5pt;color:var(--gold);">&#9888; Bot zarządza TYLKO kryptowalutami (BTC, ETH, SOL, XRP, PEPE vs USDC) — mniej par niż w wersji swingowej, bo szybszy skan (co 3 min) day tradingu wymaga bezpiecznego budżetu zapytań. Akcje, ETF i surowce <b>NIE są wyświetlane ani dotykane</b>.</div><div class="sec-t" style="margin-bottom:8px">&#128188; Saldo krypto</div><div id="revx-balances" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"><div style="color:var(--text3);font-size:9pt">Odswież aby pobrać salda</div></div><div class="sec-t" style="margin-bottom:8px">&#128204; Aktywne zlecenia krypto</div><div style="overflow-x:auto;margin-bottom:16px;"><table><thead><tr><th>Para</th><th>Strona</th><th>Typ</th><th>Cena</th><th>Ilosc</th><th>Wartosc</th><th>Status</th><th>Czas</th><th>Akcja</th></tr></thead><tbody id="open-orders-body"><tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">Brak danych</td></tr></tbody></table></div><div class="sec-t" style="margin-bottom:8px">&#128220; Historia zleceń krypto (ostatnie 20)</div><div style="overflow-x:auto;"><table><thead><tr><th>Para</th><th>Strona</th><th>Typ</th><th>Cena avg</th><th>Ilosc</th><th>Wartosc</th><th>Status</th><th>Czas</th></tr></thead><tbody id="order-history-body"><tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text3)">Brak danych</td></tr></tbody></table></div></div>
 
     <!-- BACKTEST -->
     <div id="tab-backtest" class="tab-pane" style="overflow-y:auto;padding:14px;">
@@ -633,7 +633,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
             <select id="bt-sym" style="width:110px">
               <option value="BTC_USDC">BTC_USDC</option><option value="ETH_USDC">ETH_USDC</option><option value="SOL_USDC">SOL_USDC</option>
               <option value="XRP_USDC">XRP_USDC</option><option value="DOGE_USDC">DOGE_USDC</option>
-              <option value="ADA_USDC">ADA_USDC</option><option value="AVAX_USDC">AVAX_USDC</option><option value="LINK_USDC">LINK_USDC</option>
+              <option value="ADA_USDC">ADA_USDC</option><option value="AVAX_USDC">AVAX_USDC</option><option value="LINK_USDC">LINK_USDC</option><option value="PEPE_USDC">PEPE_USDC</option>
             </select>
           </div>
           <div class="r2" style="margin-bottom:6px"><span class="lbl">Okres</span>
@@ -680,12 +680,12 @@ tr:hover td{background:rgba(123,97,255,.04);}
         <div>
           <div class="sec-t" style="margin-bottom:8px">Optymalizacja wag (Decision Tree)</div>
           <div style="font-size:8.5pt;color:var(--text2);margin-bottom:10px;line-height:1.7">
-            Algorytm analizuje dane historyczne z Binance i oblicza optymalne wagi dla każdego wskaźnika.<br>
+            Algorytm analizuje dane historyczne z Bybit i oblicza optymalne wagi dla każdego wskaźnika.<br>
             Wyniki zastępują hardkodowane wagi w silniku scoringu.
           </div>
           <div class="r2" style="margin-bottom:6px"><span class="lbl">Para treningowa</span>
             <select id="ml-sym" style="width:110px">
-              <option value="BTC_USDC">BTC_USDC</option><option value="ETH_USDC">ETH_USDC</option><option value="SOL_USDC" selected>SOL_USDC</option><option value="XRP_USDC">XRP_USDC</option>
+              <option value="BTC_USDC">BTC_USDC</option><option value="ETH_USDC">ETH_USDC</option><option value="SOL_USDC" selected>SOL_USDC</option><option value="XRP_USDC">XRP_USDC</option><option value="PEPE_USDC">PEPE_USDC</option>
             </select>
           </div>
           <div class="r2" style="margin-bottom:6px"><span class="lbl">Dni danych</span>
@@ -896,8 +896,7 @@ let CFG = {
 };
 // Day trading: mniej par niz swing (bylo 8), bo czestszy skan (co 3 min) wymaga
 // bezpiecznego budzetu zapytan. Ta sama poprawka co w worker.js.
-const PAIRS = ['BTC_USDC','ETH_USDC','SOL_USDC','XRP_USDC'];
-const BASE = 'https://api.binance.com';
+const PAIRS = ['BTC_USDC','ETH_USDC','SOL_USDC','XRP_USDC','PEPE_USDC'];
 const FEE  = 0.002;
 
 // ── STATE ──────────────────────────────────────────────────────────
@@ -1091,360 +1090,23 @@ async function btcDropGuard() {
   return false;
 }
 
-// ── BYBIT EU API ───────────────────────────────────────────────────
-const BYBIT_BASE = 'https://api.bybit.com';
-
-async function bybHmac(msg) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', enc.encode(CFG.bybSecret), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg));
-  return Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join('');
-}
-function bybWorkerReady() { return !!(CFG.bybWorker && CFG.bybWorker.startsWith('https://')); }
-
-async function bybSignedReq(method, path, params={}) {
-  if (!bybWorkerReady()) throw new Error('Brak Bybit Worker URL');
-  if (!CFG.bybApiKey) throw new Error('Brak Bybit API Key');
-  const ts = Date.now().toString();
-  const recv = '5000';
-  const qs = new URLSearchParams(params).toString();
-  const toSign = ts + CFG.bybApiKey + recv + (method==='GET' ? qs : JSON.stringify(params));
-  const signature = await bybHmac(toSign);
-  const headers = {
-    'X-BAPI-API-KEY':   CFG.bybApiKey,
-    'X-BAPI-TIMESTAMP': ts,
-    'X-BAPI-RECV-WINDOW': recv,
-    'X-BAPI-SIGN':      signature,
-    'Content-Type':     'application/json'
-  };
-  const proxyBase = CFG.bybWorker + '/proxy';
-  const url = method==='GET'
-    ? proxyBase + path + (qs ? '?'+qs : '')
-    : proxyBase + path;
-  const r = await fetchWithTimeout(url, {
-    method,
-    headers,
-    body: method!=='GET' ? JSON.stringify(params) : undefined
-  });
-  if (!r.ok) throw new Error('Bybit HTTP ' + r.status);
-  const d = await r.json();
-  if (d.retCode !== 0) throw new Error('Bybit: ' + d.retMsg);
-  return d.result;
-}
-
-// Publiczne dane z Bybit (świece, ticker) — bez proxy
-async function bybPub(path, params={}) {
-  const qs = Object.keys(params).length ? '?'+new URLSearchParams(params) : '';
-  const r = await fetchWithTimeout(BYBIT_BASE + path + qs);
-  if (!r.ok) throw new Error('Bybit pub ' + r.status);
-  const d = await r.json();
-  if (d.retCode !== 0) throw new Error('Bybit: ' + d.retMsg);
-  return d.result;
-}
-
-// Adapter: pobierz świece z Bybit w formacie Binance [ts,o,h,l,c,v]
-async function bybGetKlines(sym, tf, limit) {
-  const tfMap = {'1d':'D','4h':'240','1h':'60','15m':'15'};
-  const bybTf = tfMap[tf] || 'D';
-  const d = await bybPub('/v5/market/kline', {category:'spot', symbol:sym, interval:bybTf, limit:limit||200});
-  // Bybit zwraca [startTime, openPrice, highPrice, lowPrice, closePrice, volume, turnover]
-  return (d.list || []).reverse().map(function(k){
-    return [+k[0], +k[1], +k[2], +k[3], +k[4], +k[5]];
-  });
-}
-
-async function bybGetTicker(sym) {
-  const d = await bybPub('/v5/market/tickers', {category:'spot', symbol:sym});
-  const t = (d.list||[])[0] || {};
-  return { lastPrice: t.lastPrice, priceChangePercent: t.price24hPcnt ? (+t.price24hPcnt*100).toFixed(2) : '0' };
-}
-
-async function bybGetOrderbook(sym) {
-  try {
-    const d = await bybPub('/v5/market/orderbook', {category:'spot', symbol:sym, limit:20});
-    var bidVol = (d.b||[]).reduce(function(s,b){ var v=(parseFloat(b[0])||0)*(parseFloat(b[1])||0); return s+(isFinite(v)?v:0); }, 0);
-    var askVol = (d.a||[]).reduce(function(s,a){ var v=(parseFloat(a[0])||0)*(parseFloat(a[1])||0); return s+(isFinite(v)?v:0); }, 0);
-    var total  = bidVol + askVol;
-    return { ratio: total > 0 ? +(bidVol/total).toFixed(3) : 0.5, bidVol:bidVol, askVol:askVol, spread:0, ts:Date.now() };
-  } catch(e) { return { ratio:0.5, bidVol:0, askVol:0, spread:0, ts:Date.now() }; }
-}
-
-async function bybGetUSDC() {
-  if (CFG.mode === 'paper') return ST.paperBal;
-  const d = await bybSignedReq('GET', '/v5/account/wallet-balance', {accountType:'UNIFIED'});
-  const coin = ((d.list||[])[0]?.coin||[]).find(function(c){ return c.coin==='USDC'; });
-  // availableBalance używane dla Spot Unified Account
-  return coin ? +(coin.availableBalance || coin.availableToWithdraw || 0) : 0;
-}
-
-// Poll Bybit order history po złożeniu zlecenia — Bybit nie zwraca fill w response create
-async function bybFetchFill(sym, orderId, fallbackPrice, fallbackQuote) {
-  await new Promise(function(r){ setTimeout(r, 700); }); // czekaj na wypełnienie
-  try {
-    const h = await bybSignedReq('GET', '/v5/order/history', {category:'spot', symbol:sym, orderId:orderId, limit:1});
-    const o = (h.list||[])[0] || {};
-    const price = +o.avgPrice || fallbackPrice;
-    const qty   = +o.cumExecQty || (price > 0 ? fallbackQuote / price : 0);
-    return {price:price, qty:qty};
-  } catch(e) {
-    // Fallback: oszacuj z ceny rynkowej
-    const price = fallbackPrice || 0;
-    return {price:price, qty: price > 0 ? fallbackQuote / price : 0};
-  }
-}
-
-async function bybExecBuy(sym, quoteQty) {
-  if (CFG.mode === 'paper') {
-    const t = await bybGetTicker(sym); const p = +t.lastPrice;
-    if (!p || p <= 0) throw new Error('bybExecBuy: niepoprawna cena '+sym);
-    ST.paperBal -= quoteQty; return {price:p, qty:quoteQty/p};
-  }
-  // Pobierz aktualną cenę jako fallback przed zleceniem
-  const tickerBefore = await bybGetTicker(sym).catch(function(){ return {lastPrice:'0'}; });
-  const fallbackPrice = +tickerBefore.lastPrice;
-  const d = await bybSignedReq('POST', '/v5/order/create', {
-    category:'spot', symbol:sym, side:'Buy', orderType:'Market',
-    qty:quoteQty.toFixed(2), marketUnit:'quoteCoin'
-  });
-  return bybFetchFill(sym, d.orderId, fallbackPrice, quoteQty);
-}
-
-async function bybExecSell(sym, qty) {
-  if (CFG.mode === 'paper') {
-    const t = await bybGetTicker(sym); const p = +t.lastPrice;
-    ST.paperBal += p * qty; return {price:p, qty};
-  }
-  const tickerBefore = await bybGetTicker(sym).catch(function(){ return {lastPrice:'0'}; });
-  const fallbackPrice = +tickerBefore.lastPrice;
-  // Bybit wymaga qty jako string z dokładnością do 6 miejsc, ale minimalna wartość notional to $1
-  // Zaokrągl w dół żeby uniknąć odrzucenia przez LOT_SIZE (Bybit używa basePrecision)
-  const safeQty = Math.floor(qty * 1e6) / 1e6;
-  if (safeQty <= 0) throw new Error('bybExecSell: qty=0 po zaokrągleniu ('+sym+')');
-  const d = await bybSignedReq('POST', '/v5/order/create', {
-    category:'spot', symbol:sym, side:'Sell', orderType:'Market', qty:safeQty.toFixed(6)
-  });
-  return bybFetchFill(sym, d.orderId, fallbackPrice, safeQty * fallbackPrice);
-}
-
-// ── OKX API ────────────────────────────────────────────────────────
-const OKX_BASE = 'https://swingai-okx.tomek-falek.workers.dev/proxy';
-
-async function okxHmac(msg) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', enc.encode(CFG.okxSecret), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg));
-  return btoa(String.fromCharCode(...new Uint8Array(sig)));
-}
-function okxWorkerReady() { return !!(CFG.okxWorker && CFG.okxWorker.startsWith('https://')); }
-
-async function okxSignedReq(method, path, body) {
-  if (!okxWorkerReady()) throw new Error('Brak OKX Worker URL');
-  if (!CFG.okxApiKey)    throw new Error('Brak OKX API Key');
-  const ts  = new Date().toISOString();
-  const bodyStr = body ? JSON.stringify(body) : '';
-  const toSign  = ts + method.toUpperCase() + path + bodyStr;
-  const signature = await okxHmac(toSign);
-  const headers = {
-    'OK-ACCESS-KEY':        CFG.okxApiKey,
-    'OK-ACCESS-SIGN':       signature,
-    'OK-ACCESS-TIMESTAMP':  ts,
-    'OK-ACCESS-PASSPHRASE': CFG.okxPassphrase,
-    'Content-Type': 'application/json'
-  };
-  const proxyUrl = CFG.okxWorker.replace(/\/+$/,'') + '/proxy' + path;
-  const r = await fetchWithTimeout(proxyUrl, {
-    method,
-    headers,
-    body: bodyStr || undefined
-  });
-  if (!r.ok) throw new Error('OKX HTTP ' + r.status);
-  const d = await r.json();
-  if (d.code !== '0') throw new Error('OKX: ' + (d.msg || d.code));
-  return d.data;
-}
-
-// Publiczne dane OKX — bez proxy (OKX nie blokuje EU CORS dla /market)
-async function okxPub(path, params) {
-  const qs = params ? '?' + new URLSearchParams(params) : '';
-  const r = await fetchWithTimeout(OKX_BASE + path + qs);
-  if (!r.ok) throw new Error('OKX pub ' + r.status);
-  const d = await r.json();
-  if (d.code !== '0') throw new Error('OKX pub: ' + (d.msg || d.code));
-  return d.data;
-}
-
-// Adapter: OKX instId = BTC-USDC (ze slash) zamiast BTCUSDC
-function okxInstId(sym) { return sym.replace('USDC', '-USDC'); }
-
-// Adapter: pobierz świece OKX w formacie [ts,o,h,l,c,v]
-async function okxGetKlines(sym, tf, limit) {
-  const tfMap = {'1d':'1D','4h':'4H','1h':'1H','15m':'15m','5m':'5m'};
-  const okxTf = tfMap[tf] || '1D';
-  const d = await okxPub('/api/v5/market/candles', {instId:okxInstId(sym), bar:okxTf, limit:limit||200});
-  // OKX: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
-  return (d || []).reverse().map(function(k){
-    return [+k[0], +k[1], +k[2], +k[3], +k[4], +k[5]];
-  });
-}
-
-async function okxGetTicker(sym) {
-  const d = await okxPub('/api/v5/market/ticker', {instId:okxInstId(sym)});
-  const t = (d || [])[0] || {};
-  const last = +t.last || 0;
-  const open24 = +t.open24h || last;
-  const chgPct = open24 > 0 ? ((last - open24) / open24 * 100).toFixed(2) : '0';
-  return { lastPrice: String(last), priceChangePercent: chgPct };
-}
-
-async function okxGetOrderbook(sym) {
-  try {
-    const d = await okxPub('/api/v5/market/books', {instId:okxInstId(sym), sz:'20'});
-    const book = (d || [])[0] || {};
-    var bidVol = (book.bids||[]).reduce(function(s,b){ var v=(parseFloat(b[0])||0)*(parseFloat(b[1])||0); return s+(isFinite(v)?v:0); }, 0);
-    var askVol = (book.asks||[]).reduce(function(s,a){ var v=(parseFloat(a[0])||0)*(parseFloat(a[1])||0); return s+(isFinite(v)?v:0); }, 0);
-    var total  = bidVol + askVol;
-    return { ratio: total > 0 ? +(bidVol/total).toFixed(3) : 0.5, bidVol:bidVol, askVol:askVol, spread:0, ts:Date.now() };
-  } catch(e) { return { ratio:0.5, bidVol:0, askVol:0, spread:0, ts:Date.now() }; }
-}
-
-async function okxGetUSDC() {
-  if (CFG.mode === 'paper') return ST.paperBal;
-  const d = await okxSignedReq('GET', '/api/v5/account/balance?ccy=USDC');
-  const detail = ((d || [])[0]?.details || []).find(function(c){ return c.ccy === 'USDC'; });
-  return detail ? +(detail.availBal || 0) : 0;
-}
-
-async function okxExecBuy(sym, quoteQty) {
-  if (CFG.mode === 'paper') {
-    const t = await okxGetTicker(sym); const p = +t.lastPrice;
-    if (!p || p <= 0) throw new Error('okxExecBuy: niepoprawna cena ' + sym);
-    ST.paperBal -= quoteQty; return {price:p, qty:quoteQty/p};
-  }
-  const tickerBefore = await okxGetTicker(sym).catch(function(){ return {lastPrice:'0'}; });
-  const fallbackPrice = +tickerBefore.lastPrice;
-  const d = await okxSignedReq('POST', '/api/v5/trade/order', {
-    instId: okxInstId(sym), tdMode:'cash', side:'buy',
-    ordType:'market', sz: quoteQty.toFixed(4), tgtCcy:'quote_ccy'
-  });
-  const ordId = (d || [])[0]?.ordId;
-  if (!ordId) throw new Error('OKX buy: brak ordId');
-  // Poll status zlecenia
-  await new Promise(function(r){ setTimeout(r, 700); });
-  try {
-    const od = await okxSignedReq('GET', '/api/v5/trade/order?instId='+okxInstId(sym)+'&ordId='+ordId);
-    const o = (od || [])[0] || {};
-    const price = +o.avgPx || fallbackPrice;
-    const qty   = +o.fillSz || (price > 0 ? quoteQty / price : 0);
-    return {price:price, qty:qty};
-  } catch(e) {
-    return {price:fallbackPrice, qty: fallbackPrice > 0 ? quoteQty / fallbackPrice : 0};
-  }
-}
-
-async function okxExecSell(sym, qty) {
-  if (CFG.mode === 'paper') {
-    const t = await okxGetTicker(sym); const p = +t.lastPrice;
-    ST.paperBal += p * qty; return {price:p, qty};
-  }
-  const tickerBefore = await okxGetTicker(sym).catch(function(){ return {lastPrice:'0'}; });
-  const fallbackPrice = +tickerBefore.lastPrice;
-  const safeQty = Math.floor(qty * 1e6) / 1e6;
-  if (safeQty <= 0) throw new Error('okxExecSell: qty=0 po zaokrągleniu ('+sym+')');
-  const d = await okxSignedReq('POST', '/api/v5/trade/order', {
-    instId: okxInstId(sym), tdMode:'cash', side:'sell',
-    ordType:'market', sz: safeQty.toFixed(6), tgtCcy:'base_ccy'
-  });
-  const ordId = (d || [])[0]?.ordId;
-  if (!ordId) throw new Error('OKX sell: brak ordId');
-  await new Promise(function(r){ setTimeout(r, 700); });
-  try {
-    const od = await okxSignedReq('GET', '/api/v5/trade/order?instId='+okxInstId(sym)+'&ordId='+ordId);
-    const o = (od || [])[0] || {};
-    const price = +o.avgPx || fallbackPrice;
-    return {price:price, qty:+o.fillSz||safeQty};
-  } catch(e) {
-    return {price:fallbackPrice, qty:safeQty};
-  }
-}
-
-// ── BINANCE API ────────────────────────────────────────────────────
-async function hmac(msg) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', enc.encode(CFG.secret), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg));
-  return Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join('');
-}
+// USUNIETO: martwy kod bezposredniej (poza Workerem), sygnowanej egzekucji
+// live na Bybit (bybHmac/bybSignedReq/bybExecBuy/bybExecSell) i cala integracja
+// OKX (okxHmac/okxSignedReq/okxExecBuy/okxExecSell) - obie byly nieuzywane
+// (CFG nie ma pol bybApiKey/bybWorker/okxApiKey/okxWorker, wiec kazde wywolanie
+// od razu rzucaloby blad "Brak API Key"), a dodatkowo obchodzily architekture
+// tego bota: jedyna dozwolona egzekucja to Revolut X przez Cloudflare Worker.
+// Legalny, uzywany dostep do danych Bybit idzie WYLACZNIE przez Worker /market
+// (patrz getKlines/getTicker/OBI.fetch nizej) - nie przez zaden z usunietych
+// tu klientow.
+// USUNIETO: martwy kod live-egzekucji przez Binance (hmac/signedReq/apiBase z
+// X-MBX-APIKEY) i Binance'owy LOT_SIZE/stepSize prefetch (/api/v3/exchangeInfo) -
+// ten agent nie ma i nie bedzie mial nic wspolnego z Binance. Realny handel LIVE dziala WYLACZNIE przez
+// Cloudflare Worker + Revolut X (execBuy/execSell nizej odcinaja LIVE z przegladarki
+// jasnym bledem). Dane rynkowe (getKlines/getTicker nizej) juz od dawna ida przez
+// Worker /market -> Bybit, nie przez ten usuniety kod.
 function workerReady() { return !!(CFG.workerUrl && CFG.workerUrl.startsWith('https://')); }
-function apiBase() { return workerReady() ? CFG.workerUrl.replace(/\/+$/,'')+'/proxy' : BASE; }
 
-async function signedReq(method, path, params={}) {
-  if (!workerReady()) throw new Error('Brak Worker URL');
-  params.timestamp  = Date.now();
-  params.recvWindow = 5000;  // chroni przed odrzuceniem zlecenia przy opóźnieniu sieci
-  const qs1 = new URLSearchParams(params).toString();
-  params.signature = await hmac(qs1);
-  const r = await fetchWithTimeout(apiBase()+path+'?'+new URLSearchParams(params).toString(),
-    {method, headers:{'X-MBX-APIKEY':CFG.apiKey}});
-  if (!r.ok) { const e=await r.json().catch(()=>({msg:r.statusText})); throw new Error(e.msg||r.statusText); }
-  return r.json();
-}
-
-// Oblicza średnią ważoną cenę z tablicy fills Binance (obsługa częściowych wypełnień)
-function calcFillPrice(fills) {
-  if (!fills || !fills.length) return 0;
-  let totalQty = 0, totalCost = 0;
-  for (const f of fills) {
-    const p = +(f.price||0), q = +(f.qty||0);
-    if (p > 0 && q > 0) { totalCost += p*q; totalQty += q; }
-  }
-  return totalQty > 0 ? totalCost/totalQty : +(fills[0].price||0);
-}
-
-// ── LOT_SIZE / STEP_SIZE CACHE ─────────────────────────────────────
-// Cache stepSize per para — pobierany raz z /api/v3/exchangeInfo
-var _stepSizeCache = {};
-async function fetchStepSize(sym) {
-  if (_stepSizeCache[sym] !== undefined) return _stepSizeCache[sym];
-  try {
-    const d = await pub('/api/v3/exchangeInfo', {symbol:sym});
-    const info = (d.symbols||[]).find(function(s){ return s.symbol===sym; });
-    if (!info) { _stepSizeCache[sym] = 1e-6; return 1e-6; }
-    const lotFilter = (info.filters||[]).find(function(f){ return f.filterType==='LOT_SIZE'; });
-    const stepSize  = lotFilter ? parseFloat(lotFilter.stepSize) : 1e-6;
-    _stepSizeCache[sym] = stepSize > 0 ? stepSize : 1e-6;
-  } catch(e) {
-    _stepSizeCache[sym] = 1e-6; // fallback — 6 miejsc dziesiętnych
-  }
-  return _stepSizeCache[sym];
-}
-// Zaokrągla qty w dół do stepSize (nie zaokrąglaj w górę — Binance odrzuci nadmiar)
-function roundQty(sym, qty) {
-  const step = _stepSizeCache[sym] || 1e-6;
-  if (step <= 0 || !isFinite(step)) return +qty.toFixed(6);
-  const precision = Math.round(-Math.log10(step));
-  return Math.floor(qty / step) * step;
-}
-// Prefetch stepSize przy starcie bota dla wszystkich par
-async function prefetchStepSizes() {
-  if (CFG.mode === 'paper') return;
-  try {
-    const d = await pub('/api/v3/exchangeInfo');
-    (d.symbols||[]).forEach(function(info) {
-      if (!PAIRS.includes(info.symbol)) return;
-      const lotFilter = (info.filters||[]).find(function(f){ return f.filterType==='LOT_SIZE'; });
-      const stepSize  = lotFilter ? parseFloat(lotFilter.stepSize) : 1e-6;
-      _stepSizeCache[info.symbol] = stepSize > 0 ? stepSize : 1e-6;
-    });
-    log('LOT_SIZE cache: '+Object.keys(_stepSizeCache).length+' par', 'ok');
-  } catch(e) {
-    log('prefetchStepSizes blad: '+e.message, 'warn');
-  }
-}
-async function pub(path, params={}) {
-  const r = await fetchWithTimeout(BASE+path+(Object.keys(params).length?'?'+new URLSearchParams(params):''));
-  if (!r.ok) throw new Error(r.statusText);
-  return r.json();
-}
 async function getKlines(sym,tf,limit){
   limit=limit||200;
   // Revolut X format: "BTC/USDC" - to zamiana podkreslnika na slash, 1:1 z
@@ -1530,7 +1192,7 @@ function ema(a,p) { const arr=emaArr(a,p); return arr.length ? arr.at(-1) : 0; }
 function rsi(c, p) {
   p = p || 14;
   if (c.length < p + 1) return 50;
-  // Wilder's smoothing (zgodny z TradingView / Binance)
+  // Wilder's smoothing (standardowa, kanoniczna definicja ATR/RSI)
   var avgG = 0, avgL = 0;
   for (var i = 1; i <= p; i++) {
     var d = c[i] - c[i-1];
@@ -2115,85 +1777,24 @@ function aiExplainShortPosition(pos, sig) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  IMPROVEMENT 1: WEBSOCKET — live stream cen
-//  Binance stream: wss://stream.binance.com:9443/stream
-//  Aktualizuje pos.cp w czasie rzeczywistym i wywoluje checkTrail()
+//  Live ceny pozycji — REST polling przez Worker (Bybit), NIE WebSocket.
+//  USUNIETO: martwy kod WebSocket do wss://stream.binance.com (ten agent nie
+//  ma i nie bedzie mial nic wspolnego z Binance). connect() byl juz od dawna
+//  no-opem (early return) - realne odswiezanie pos.cp/checkTrail robi szybki
+//  polling co 30s (setInterval nizej, checkPositions) niezaleznie od tego
+//  obiektu. Zostawiono WS jako stub, bo disconnect()/getPrice()/isAlive() i
+//  status w UI ('rb-ws') sa jeszcze uzywane w kilku miejscach.
 // ═══════════════════════════════════════════════════════════════════
 var WS = {
   socket: null,
   active: false,
-  blocked: false,    // true gdy siec blokuje WS (np. Zscaler)
+  blocked: true,     // trwale nieaktywny (polling REST przez Worker/Bybit)
   retries: 0,
-  maxRetries: 3,     // po 3 nieudanych probach — trwaly polling, bez spamu
+  maxRetries: 3,
   livePrice: {},
   lastPing: 0,
 
-  buildStreamUrl: function() {
-    var streams = PAIRS.map(function(s){ return s.toLowerCase()+'@miniTicker'; });
-    return 'wss://stream.binance.com:9443/stream?streams='+streams.join('/');
-  },
-
-  connect: function() {
-    if (this.blocked) return;                              // siec blokuje — nie probuj
-    return; // Revolut X — polling REST via Worker
-    if (this.socket && this.socket.readyState < 2) return; // juz podlaczony
-    try {
-      this.socket = new WebSocket(this.buildStreamUrl());
-      this.active = false;
-
-      this.socket.onopen = function() {
-        WS.active   = true;
-        WS.retries  = 0;
-        WS.blocked  = false;
-        WS.lastPing = Date.now();
-        log('WebSocket polaczony — live ceny aktywne', 'ok');
-        updateWSStatus(true);
-      };
-
-      this.socket.onmessage = function(evt) {
-        try {
-          var msg = JSON.parse(evt.data);
-          var d   = msg.data || msg;
-          var sym = (d.s || '').toUpperCase();
-          var price = parseFloat(d.c || d.lastPrice || 0);
-          if (!sym || !price) return;
-          WS.livePrice[sym] = price;
-          WS.lastPing = Date.now();
-          ST.positions.forEach(function(pos) {
-            if (pos.sym !== sym) return;
-            pos.cp = price;
-            if (price > (pos.highP || pos.entry)) pos.highP = price;
-            WS.checkTrail(pos, price);
-          });
-        } catch(e) {}
-      };
-
-      this.socket.onerror = function() {
-        WS.active = false;
-        updateWSStatus(false);
-        // Nie loguj bledu co probe — tylko raz
-        if (WS.retries === 0) log('WebSocket zablokowany (Zscaler/firewall) — bot uzywa polling REST API', 'warn');
-      };
-
-      this.socket.onclose = function() {
-        WS.active = false;
-        updateWSStatus(false);
-        WS.retries++;
-        if (WS.retries >= WS.maxRetries) {
-          WS.blocked = true;
-          log('WebSocket niedostepny po '+WS.maxRetries+' probach — trwaly polling aktywny. Bot dziala normalnie.', 'warn');
-          updateWSStatus(false);
-          return; // brak dalszych prob
-        }
-        // Kolejna proba z exponential backoff (10s, 20s, 40s)
-        var delay = 10000 * Math.pow(2, WS.retries - 1);
-        setTimeout(function(){ if (running && !WS.blocked) WS.connect(); }, delay);
-      };
-    } catch(e) {
-      WS.blocked = true;
-      log('WebSocket niedostepny — polling aktywny', 'warn');
-    }
-  },
+  connect: function() { /* no-op — polling REST via Worker/Bybit, patrz checkPositions() */ },
 
   disconnect: function() {
     this.active  = false;
@@ -2283,7 +1884,7 @@ function updateWSStatus(active) {
   if (active) {
     el.textContent = 'LIVE ⚡'; el.className = 'val up';
   } else if (WS.blocked) {
-    el.textContent = 'Polling (firewall)'; el.className = 'val neu';
+    el.textContent = 'Polling (REST)'; el.className = 'val neu';
   } else {
     el.textContent = 'Polling'; el.className = 'val neu';
   }
@@ -2851,9 +2452,7 @@ async function startBot() {
   if (!ST.dailyStartBalance || ST.dailyDate !== new Date().toDateString()) {
     getTotal().then(function(t){ if (t>0 && !ST.dailyStartBalance) { ST.dailyStartBalance=t; saveAll(); } }).catch(function(){});
   }
-  // Pobierz LOT_SIZE/stepSize dla wszystkich par (Binance LIVE) — unikamy odrzuceń zleceń
-  prefetchStepSizes();
-  // Uruchom WebSocket
+  // Uruchom WebSocket (no-op — patrz komentarz w WS.connect, polling REST via Worker)
   WS.connect();
   // Retrenuj AI na historii z poprzednich sesji
   setTimeout(function(){ ADAPTIVE.retrain(); updateAIStatusPanel(); }, 800);
@@ -2964,7 +2563,7 @@ async function updateHeader() {
     gi('mode-badge').className   = CFG.mode==='paper' ? 'badge bwarn' : 'badge bon';
     gi('st-mode').textContent = CFG.mode.toUpperCase();
     const rw = gi('rb-proxy');
-    if (rw) { rw.textContent=CFG.mode==='paper'?'(PAPER)':workerReady()||bybWorkerReady()?'OK':'brak'; rw.className=CFG.mode==='paper'?'val neu':workerReady()||bybWorkerReady()?'val up':'val dn'; }
+    if (rw) { rw.textContent=CFG.mode==='paper'?'(PAPER)':workerReady()?'OK':'brak'; rw.className=CFG.mode==='paper'?'val neu':workerReady()?'val up':'val dn'; }
     const re = gi('rb-exchange');
     if (re) { re.textContent='Revolut X'; re.className='val acc'; }
   } catch(e) {}
@@ -3482,7 +3081,7 @@ function clearLog() { gi('log-area').innerHTML=''; var lc=gi('log-count'); if(lc
 // ═══════════════════════════════════════════════════════════════════
 //  AI MODULE 5: ORDER BOOK IMBALANCE
 //  bid_vol / (bid_vol + ask_vol) > 0.65 → bullish pressure
-//  Pobiera top 20 poziomow order booka z Binance /api/v3/depth
+//  Pobiera top 20 poziomow order booka przez Worker /market -> Bybit
 // ═══════════════════════════════════════════════════════════════════
 var OBI = {
   cache: {},   // sym -> {ratio, ts}
@@ -3893,6 +3492,22 @@ function calcVWAP(highs, lows, closes, volumes) {
   return vol > 0 ? tpVol / vol : closes[closes.length-1];
 }
 
+// Sklastruj sasiadujace pivoty (w tolerancji %) w jeden precyzyjny poziom (usrednienie),
+// zeby uniknac kilku nakladajacych sie, "rozmytych" linii blisko tej samej ceny.
+function clusterLevels(values, tolPct) {
+  var sorted = values.slice().sort(function(a,b){ return a-b; });
+  var clusters = [];
+  sorted.forEach(function(v){
+    var last = clusters[clusters.length-1];
+    if (last && Math.abs(v/last.avg - 1) <= tolPct) {
+      last.sum += v; last.n += 1; last.avg = last.sum/last.n;
+    } else {
+      clusters.push({ sum: v, n: 1, avg: v });
+    }
+  });
+  return clusters.map(function(c){ return c.avg; });
+}
+
 // Wykryj lokalne pivoty S/R z ostatnich 50 swiec 1H
 function calcSRLevels(highs, lows, price) {
   var n = Math.min(50, highs.length);
@@ -3904,8 +3519,10 @@ function calcSRLevels(highs, lows, price) {
     if (lows[i] < lows[i-1] && lows[i] < lows[i-2] && lows[i] < lows[i+1] && lows[i] < lows[i+2])
       pivotLows.push(lows[i]);
   }
-  var above = pivotHighs.filter(function(v){ return v > price; }).sort(function(a,b){ return a-b; }).slice(0,3);
-  var below = pivotLows.filter(function(v){ return v < price; }).sort(function(a,b){ return b-a; }).slice(0,2);
+  var clusteredHighs = clusterLevels(pivotHighs, 0.0025);
+  var clusteredLows  = clusterLevels(pivotLows, 0.0025);
+  var above = clusteredHighs.filter(function(v){ return v > price; }).sort(function(a,b){ return a-b; }).slice(0,3);
+  var below = clusteredLows.filter(function(v){ return v < price; }).sort(function(a,b){ return b-a; }).slice(0,2);
   return { above: above, below: below, all: above.concat(below) };
 }
 
@@ -4312,10 +3929,9 @@ async function runBacktest() {
   var slPct   = parseFloat(gi('bt-sl').value)/100;
   var btn     = gi('bt-btn');
   btn.disabled=true; btn.textContent='Pobieranie danych...';
-  gi('bt-progress').textContent = 'Pobieranie '+days+' dni danych z Binance...';
+  gi('bt-progress').textContent = 'Pobieranie '+days+' dni danych z Bybit...';
 
   try {
-    // Używa aktywnej giełdy (Binance lub Bybit) zgodnie z konfiguracją
     var klines = await getKlines(sym, '1h', Math.min(days*24, 720)); // day trading: swiece 1H, limit API ~720
     var closes  = klines.map(function(k){ return +k[4]; });
     var highs   = klines.map(function(k){ return +k[2]; });
@@ -4667,7 +4283,7 @@ function drawMLChart(result) {
   ctx.fillText('Information Gain per wskaznik (wiekszy = wazniejszy)', 10, 12);
 }
 
-// Trenuj NB + GBM na danych historycznych Binance (bez historii transakcji)
+// Trenuj NB + GBM na danych historycznych Bybit (bez historii transakcji)
 async function trainAllAI() {
   var sym  = gi('ml-sym').value;
   var days = parseInt(gi('ml-days').value);
@@ -5306,41 +4922,42 @@ var INLINE_CHART = {
     }
     function drawLevelLine(price, color, label, dash) {
       var y = yP(price);
-      ctx.setLineDash(dash || [5,3]);
-      ctx.strokeStyle = color; ctx.lineWidth = 1.3;
+      ctx.setLineDash(dash || [6,3]);
+      ctx.strokeStyle = color; ctx.lineWidth = 2.2;
       ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W-PAD.r, y); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = color; ctx.font = 'bold 8.5px JetBrains Mono,monospace'; ctx.textAlign = 'left';
+      ctx.fillStyle = color; ctx.font = 'bold 9.5px JetBrains Mono,monospace'; ctx.textAlign = 'left';
       var pLbl = price>=1?price.toFixed(2):price.toFixed(5);
       ctx.fillText(label + ' ' + pLbl, PAD.l + 4, y - 3);
     }
     var rrText = null;
     if (sig && sig.buy && sig.levels) {
-      drawZone(sig.price, sig.levels.tp, 'rgba(0,229,160,0.12)');
-      drawZone(sig.price, sig.levels.sl, 'rgba(255,61,90,0.12)');
-      drawLevelLine(sig.levels.tp, 'rgba(0,229,160,0.9)', 'TP');
-      drawLevelLine(sig.levels.sl, 'rgba(255,61,90,0.9)', 'SL');
+      drawZone(sig.price, sig.levels.tp, 'rgba(0,229,160,0.20)');
+      drawZone(sig.price, sig.levels.sl, 'rgba(255,61,90,0.20)');
+      drawLevelLine(sig.levels.tp, 'rgba(0,229,160,1)', 'TP');
+      drawLevelLine(sig.levels.sl, 'rgba(255,61,90,1)', 'SL');
       drawLevelLine(sig.price,     'rgba(255,255,255,0.55)', 'WEJŚCIE (LONG)', [2,2]);
       rrText = { text: 'R:R 1:' + sig.levels.rr, color: 'rgba(0,229,160,0.95)', dir: 'LONG' };
     } else if (sig && sig.shortSignal && sig.shortLevels) {
-      // Short = TYLKO informacyjny (Revolut X nie obsluguje marginu) - inny
-      // odcien (bursztynowy), zeby wizualnie nie mylic z realnie wykonywalnym longiem.
-      drawZone(sig.price, sig.shortLevels.tp, 'rgba(255,179,71,0.10)');
-      drawZone(sig.price, sig.shortLevels.sl, 'rgba(255,61,90,0.10)');
-      drawLevelLine(sig.shortLevels.tp, 'rgba(255,179,71,0.85)', 'TP (short, info)');
-      drawLevelLine(sig.shortLevels.sl, 'rgba(255,61,90,0.85)', 'SL (short, info)');
+      // Short = TYLKO informacyjny (Revolut X nie obsluguje marginu). Kolory
+      // TP/SL takie same jak dla longa (zielony/czerwony) - odroznienie od
+      // realnie wykonywalnego longa idzie przez etykiete "(short, info)".
+      drawZone(sig.price, sig.shortLevels.tp, 'rgba(0,229,160,0.20)');
+      drawZone(sig.price, sig.shortLevels.sl, 'rgba(255,61,90,0.20)');
+      drawLevelLine(sig.shortLevels.tp, 'rgba(0,229,160,1)', 'TP (short, info)');
+      drawLevelLine(sig.shortLevels.sl, 'rgba(255,61,90,1)', 'SL (short, info)');
       drawLevelLine(sig.price,          'rgba(255,255,255,0.55)', 'POZIOM (SHORT — INFO, nie wykonywany)', [2,2]);
-      rrText = { text: 'R:R 1:' + sig.shortLevels.rr + ' (informacyjnie)', color: 'rgba(255,179,71,0.95)', dir: 'SHORT (info)' };
+      rrText = { text: 'R:R 1:' + sig.shortLevels.rr + ' (informacyjnie)', color: 'rgba(0,229,160,0.95)', dir: 'SHORT (info)' };
     }
 
-    // ── WSPARCIE / OPÓR (S/R) — pogrubione linie, aktualne po kazdym skanie ──
+    // ── WSPARCIE / OPÓR (S/R) — precyzyjna linia 1px, pixel-snapped, cena z pelna dokladnoscia ──
     function drawSRLine(price, color, label) {
-      var y = yP(price);
+      var y = Math.round(yP(price)) + 0.5; // snap do pikselowej sieci = ostra, nie rozmyta linia
       ctx.setLineDash([]);
-      ctx.strokeStyle = color; ctx.lineWidth = 3;
+      ctx.strokeStyle = color; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W-PAD.r, y); ctx.stroke();
       ctx.fillStyle = color; ctx.font = 'bold 8.5px JetBrains Mono,monospace'; ctx.textAlign = 'right';
-      var pLbl = price>=1?price.toFixed(2):price.toFixed(5);
+      var pLbl = price>=1000?price.toFixed(1):price>=1?price.toFixed(4):price.toFixed(6);
       ctx.fillText(label + ' ' + pLbl, W-PAD.r-4, y - 4);
     }
     if (sig && sig.srLevels) {
@@ -5450,7 +5067,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Auto-scan sygnałów przy starcie (bez uruchamiania pełnego bota)
   setTimeout(function() {
     log('Auto-analiza sygnałów AI przy starcie...', 'info');
-    var INIT_PAIRS = ['BTC_USDC', 'ETH_USDC', 'SOL_USDC', 'XRP_USDC'];
+    var INIT_PAIRS = ['BTC_USDC', 'ETH_USDC', 'SOL_USDC', 'XRP_USDC', 'PEPE_USDC'];
     (async function(){
       for (var ip=0; ip<INIT_PAIRS.length; ip++) {
         try {
@@ -5474,6 +5091,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </body>
 
 </html>
+
 
 
 
