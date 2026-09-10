@@ -4782,7 +4782,16 @@ var _audioCtx = null;
 // AudioContext wymaga gestu uzytkownika by wyjsc ze stanu 'suspended' (polityka
 // autoplay przegladarek) - bez tego dzwieki tworzone programowo (np. przy
 // automatycznym zamknieciu pozycji) moglyby nie byc slyszalne mimo ze _soundOn=true.
+// FIX: poprzednia wersja tylko "wznawiala" _audioCtx, jesli juz istnial - ale
+// alerty otwarcia/zamkniecia pozycji (_beep/alertPositionOpen/Close) tworzyly
+// go LENIWIE przy PIERWSZYM alercie, ktory odpala bot automatycznie (nie klik
+// uzytkownika) - context wiec nigdy nie zdazyl zostac odblokowany i dzwiek byl
+// bezglosny mimo poprawnej logiki. Teraz kontekst tworzymy juz PRZY PIERWSZYM
+// kliknieciu gdziekolwiek na stronie, zanim jakikolwiek alert go potrzebuje.
 document.addEventListener('click', function() {
+  if (!_audioCtx) {
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  }
   if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
 }, { once: false });
 
