@@ -733,13 +733,13 @@ function calcSRLevels(highs, lows, price) {
   return { above, below, all: [...above, ...below] };
 }
 
-function detectRegime(closes, atrD, ema50, ema200) {
+function detectRegime(closes, atrD, ema20, ema50) {
   const price = closes.at(-1);
   const atrPct = atrD / price;
   if (atrPct > 0.035) return 'volatile';
-  if (Math.abs(ema50/ema200 - 1) < 0.005 && atrPct < 0.02) return 'sideways';
-  if (price > ema50 && ema50 > ema200) return 'bull_trend';
-  if (price < ema50 && ema50 < ema200) return 'bear_trend';
+  if (Math.abs(ema20/ema50 - 1) < 0.005 && atrPct < 0.02) return 'sideways';
+  if (price > ema20 && ema20 > ema50) return 'bull_trend';
+  if (price < ema20 && ema20 < ema50) return 'bear_trend';
   return 'neutral';
 }
 
@@ -789,12 +789,12 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const rsiD   = rsi(d.c, 14);
   const macdD  = macdFull(d.c);
   const bbD    = bband(d.c, 20);
-  const ema50  = emaLast(d.c, 50);
-  const ema200 = emaLast(d.c, 200);
+  const ema20  = emaLast(d.c, 20);
+  const ema50 = emaLast(d.c, 50);
   const atrD   = atr(d.h, d.l, d.c, 14);
   const vwap4h = calcVWAP(h4.h, h4.l, h4.c, h4.v);
   const srLevels = calcSRLevels(d.h, d.l, price);
-  const regime = detectRegime(d.c, atrD, ema50, ema200);
+  const regime = detectRegime(d.c, atrD, ema20, ema50);
 
   // Wskaźniki 4H
   const rsi4h  = rsi(h4.c, 14);
@@ -812,7 +812,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const div4h = rsiDivergence(h4.c.slice(-30), rsiArr4h, 28);
 
   // Trend
-  const trendD = price > ema200 ? (price > ema50 ? 2 : 1) : (price > ema50 ? 0 : -1);
+  const trendD = price > ema50 ? (price > ema20 ? 2 : 1) : (price > ema20 ? 0 : -1);
 
   // Volume
   const _vSum20 = d.v.length >= 20 ? d.v.slice(-20).reduce((a,b)=>a+b,0) : 0;
@@ -849,10 +849,10 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   else if (bbD.pos < 0.35) { score += 6; }
   else if (bbD.pos > 0.85) { score -= 10; why.push('BB gorna — ryzyko'); }
 
-  if      (trendD === 2)  { score += 12; why.push('Ponad EMA50+200 — bull'); }
-  else if (trendD === 1)  { score += 8;  why.push('Ponad EMA200'); }
+  if      (trendD === 2)  { score += 12; why.push('Ponad EMA20+50 — bull'); }
+  else if (trendD === 1)  { score += 8;  why.push('Ponad EMA50'); }
   else if (trendD === 0)  { score += 3; }
-  else                    { score -= 20; why.push('Ponizej EMA200 — bessa'); }
+  else                    { score -= 20; why.push('Ponizej EMA50 — bessa'); }
 
   if      (mom5 > 0 && mom10 < 0)    { score += 8; why.push('Momentum odwrocenie'); }
   else if (mom5 < -5 && mom10 < -10) { score += 5; why.push('Oversold momentum'); }
@@ -951,7 +951,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const nbFeatures  = nb.discretize({ rsiD, macdHist: macdD.hist, bbPos: bbD.pos, trendD, mom5, confirm1h });
   const bodyRatio  = Math.abs(d.c.at(-1) - d.o.at(-1)) / (d.h.at(-1) - d.l.at(-1) + 0.001);
   const atrPctFeat = Math.min(1, atrD / price / 0.1);
-  const emaSlopeD  = Math.max(-1, Math.min(1, (ema50/ema200 - 1) * 10));
+  const emaSlopeD  = Math.max(-1, Math.min(1, (ema20/ema50 - 1) * 10));
   const gbmFeatures = [rsiD/100, macdD.hist>0?1:0, bbD.pos, (trendD+1)/3, mom5/20, mom10/20, confirm1h?1:0, volR/3, obiData.ratio||0.5, bodyRatio, atrPctFeat, emaSlopeD];
 
   const nbPred  = nb.predict({ rsiD, macdHist: macdD.hist, bbPos: bbD.pos, trendD, mom5, confirm1h });
@@ -1029,7 +1029,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     sym, price,
     rsiD: +rsiD.toFixed(1), rsi4h: +rsi4h.toFixed(1), rsi1h: +rsi1h.toFixed(1), confirm1h,
     macdHist: macdD.hist, macdLine: macdD.line,
-    bbPos: bbD.pos, trendD, ema50, ema200, atrD,
+    bbPos: bbD.pos, trendD, ema20, ema50, atrD,
     score, finalProb: +finalProb.toFixed(3), buy, shortSignal, shortLevels,
     nbPred, gbmProb: +gbmProb.toFixed(3), qlSugg, aiMethod,
     obiRatio: obiData.ratio || 0.5, obiScore, spreadPct: obiData.spreadPct,

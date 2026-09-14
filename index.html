@@ -1384,14 +1384,14 @@ async function analyzeSwing(sym) {
   const price = d.c.at(-1);
 
   const rsiD  = rsi(d.c,14), macdD=macd(d.c), bbD=bband(d.c);
-  const ema50 = ema(d.c,50),  ema200=ema(d.c,200), ema21=ema(d.c,21);
+  const ema20 = ema(d.c,20),  ema50=ema(d.c,50), ema21=ema(d.c,21);
   const atrD  = atr(d.h,d.l,d.c,14);
   // VWAP 4H
   const vwap4h = calcVWAP(h4.h, h4.l, h4.c, h4.v);
   // S/R levels
   const srLevels = calcSRLevels(d.h, d.l, price);
   // Market Regime
-  const regime = detectRegime(d.c, atrD, ema50, ema200);
+  const regime = detectRegime(d.c, atrD, ema20, ema50);
   const rsi4h = rsi(h4.c,14), macd4h=macd(h4.c);
   const rsi1h = rsi(h1.c,14), macd1h=macd(h1.c);
   const confirm1h = macd1h.hist>0 && rsi1h<55;
@@ -1400,7 +1400,7 @@ async function analyzeSwing(sym) {
   const rsiArr4h = rsiArray(h4.c.slice(-30), 14);
   const divD  = rsiDivergence(d.c.slice(-40),  rsiArrD,  38);
   const div4h = rsiDivergence(h4.c.slice(-30), rsiArr4h, 28);
-  const trendD = price>ema200 ? (price>ema50?2:1) : (price>ema50?0:-1);
+  const trendD = price>ema50 ? (price>ema20?2:1) : (price>ema20?0:-1);
   const _vSum20h = d.v.length>=20 ? d.v.slice(-20).reduce((a,b)=>a+b,0) : 0;
   const volR   = (_vSum20h > 0) ? d.v.at(-1)/(_vSum20h/20) : 1;
   const _v4Sum20h = h4.v.length>=20 ? h4.v.slice(-20).reduce((a,b)=>a+b,0) : 0;
@@ -1426,10 +1426,10 @@ async function analyzeSwing(sym) {
   else if (bbD.pos<0.20) { score+=13; why.push('BB dolna strefa'); }
   else if (bbD.pos<0.35) { score+=6; }
   else if (bbD.pos>0.85) { score-=10; why.push('BB górna — ryzyko'); }
-  if      (trendD===2)  { score+=12; why.push('Ponad EMA50+200 — bull'); }
-  else if (trendD===1)  { score+=8;  why.push('Ponad EMA200'); }
+  if      (trendD===2)  { score+=12; why.push('Ponad EMA20+50 — bull'); }
+  else if (trendD===1)  { score+=8;  why.push('Ponad EMA50'); }
   else if (trendD===0)  { score+=3; }
-  else                  { score-=20; why.push('Poniżej EMA200 — bessa'); }
+  else                  { score-=20; why.push('Poniżej EMA50 — bessa'); }
   if      (mom5>0 && mom10<0)    { score+=8; why.push('Momentum odwrócenie'); }
   else if (mom5<-5 && mom10<-10) { score+=5; why.push('Oversold momentum'); }
   else if (mom5>8)               { score-=5; why.push('Zbyt szybki wzrost'); }
@@ -1526,7 +1526,7 @@ async function analyzeSwing(sym) {
   const nbFeatures  = NB.discretize({ rsiD, macdHist:macdD.hist, bbPos:bbD.pos, trendD, mom5, confirm1h });
   const bodyRatio  = Math.abs(d.c[d.c.length-1] - kd[kd.length-1][1]) / (d.h[d.h.length-1] - d.l[d.l.length-1] + 0.001);
   const atrPctFeat = Math.min(1, atrD / price / 0.1);
-  const emaSlopeD  = Math.max(-1, Math.min(1, (ema50/ema200 - 1) * 10));
+  const emaSlopeD  = Math.max(-1, Math.min(1, (ema20/ema50 - 1) * 10));
   const gbmFeatures = [ rsiD/100, macdD.hist>0?1:0, bbD.pos, (trendD+1)/3, mom5/20, mom10/20, confirm1h?1:0, volR/3, obiData.ratio, bodyRatio, atrPctFeat, emaSlopeD ];
 
   // ── NB + GBM predictions ─────────────────────────────────────────
@@ -1614,7 +1614,7 @@ async function analyzeSwing(sym) {
     rsiD:+rsiD.toFixed(1), rsi4h:+rsi4h.toFixed(1), rsi1h:+rsi1h.toFixed(1), confirm1h,
     macdHist:macdD.hist, macdLine:macdD.line,
     bbPos:bbD.pos, bbUpper:bbD.upper, bbLower:bbD.lower,
-    trendD, ema50, ema200, ema21, atrD,
+    trendD, ema20, ema50, ema21, atrD,
     score, finalProb:+finalProb.toFixed(3), buy, shortSignal, shortLevels, levels,
     nbPred, gbmProb:+gbmProb.toFixed(3), qlSugg, aiMethod,
     obiRatio:obiData.ratio, obiScore, obiLabel:OBI.label(obiData.ratio),
@@ -1639,7 +1639,7 @@ function buildGauge(name, val, mn, mx, color, textOnly) {
 }
 
 function aiExplainSignal(sig) {
-  const trendMap = ['ponizej EMA200','ponizej EMA50','ponad EMA200','ponad EMA50+200'];
+  const trendMap = ['ponizej EMA50','ponizej EMA20','ponad EMA50','ponad EMA20+50'];
   const trend = trendMap[Math.max(0,Math.min(3,sig.trendD+1))];
   const prob  = sig.finalProb !== undefined ? sig.finalProb : sig.score/100;
   const probPct = (prob*100).toFixed(1);
@@ -2361,7 +2361,7 @@ async function botCycle() {
   } else if (lastSigs.length > 0) {
     renderSigList(lastSigs);
   } else {
-    var defS = PAIRS.map(function(p){ return {sym:p,score:0,buy:false,trendD:0,rsi14:50,rsiD:50,macd:0,macdHist:0,bbPos:0.5,ema50:0,ema200:0,vwap:0,sr:{s:[],r:[]},why:[],price:0}; });
+    var defS = PAIRS.map(function(p){ return {sym:p,score:0,buy:false,trendD:0,rsi14:50,rsiD:50,macd:0,macdHist:0,bbPos:0.5,ema20:0,ema50:0,vwap:0,sr:{s:[],r:[]},why:[],price:0}; });
     renderSigList(defS);
   }
 
@@ -3611,13 +3611,13 @@ function calcSRLevels(highs, lows, price) {
 }
 
 // Wykryj rezim rynkowy
-function detectRegime(closes, atrD, ema50val, ema200val) {
+function detectRegime(closes, atrD, ema20val, ema50val) {
   var price = closes[closes.length-1];
   var atrPct = atrD / price;
   if (atrPct > 0.035) return 'volatile';
-  if (Math.abs(ema50val/ema200val - 1) < 0.005 && atrPct < 0.02) return 'sideways';
-  if (price > ema50val && ema50val > ema200val) return 'bull_trend';
-  if (price < ema50val && ema50val < ema200val) return 'bear_trend';
+  if (Math.abs(ema20val/ema50val - 1) < 0.005 && atrPct < 0.02) return 'sideways';
+  if (price > ema20val && ema20val > ema50val) return 'bull_trend';
+  if (price < ema20val && ema20val < ema50val) return 'bear_trend';
   return 'neutral';
 }
 
@@ -4319,7 +4319,7 @@ function trainDecisionWeights(X, y) {
 function renderMLWeights(result) {
   var w = result.weights;
   var base = {rsi:30, macd:20, bb:18, trend:12, mom:8, vol:5};
-  var names = ['RSI 1H (14)','MACD histogram','Bollinger Bands','Trend EMA50/200','Momentum 5/10 swiec','Wolumen spike'];
+  var names = ['RSI 1H (14)','MACD histogram','Bollinger Bands','Trend EMA20/200','Momentum 5/10 swiec','Wolumen spike'];
   var keys  = ['rsi','macd','bb','trend','mom','vol'];
   var html  = '';
   keys.forEach(function(k,i) {
@@ -4760,7 +4760,7 @@ updateAIStatusPanel();
 // Zaladuj saldo i pokaz pary przy starcie strony
 (async function initUI(){
   try { const u=await getUSDC(); if(u>0){ gi('h-usdc').textContent='$'+u.toFixed(2); gi('h-total').textContent='$'+u.toFixed(2); } } catch(e){}
-  const defSigs = PAIRS.map(function(p){ return {sym:p,score:0,buy:false,trendD:0,rsi14:50,rsiD:50,macd:0,macdHist:0,bbPos:0.5,ema50:0,ema200:0,vwap:0,sr:{s:[],r:[]},why:[],price:0}; });
+  const defSigs = PAIRS.map(function(p){ return {sym:p,score:0,buy:false,trendD:0,rsi14:50,rsiD:50,macd:0,macdHist:0,bbPos:0.5,ema20:0,ema50:0,vwap:0,sr:{s:[],r:[]},why:[],price:0}; });
   renderSigList(defSigs);
 })();
 log('SwingAI Bot v2 | '+PAIRS.length+' par | Kelly | Fear&Greed | PumpDump | 1H confirm');

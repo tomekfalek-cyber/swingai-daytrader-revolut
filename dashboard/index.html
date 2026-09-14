@@ -812,6 +812,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
   <div class="form-row"><label>Take Profit %</label><input id="cfg-tp" type="number" value="2" step="0.1" min="0.5" max="8"> <small class="lbl">Day trading: 1.5-3%</small></div>
   <div class="form-row"><label>Stop Loss %</label><input id="cfg-sl" type="number" value="1" step="0.1" min="0.3" max="4"> <small class="lbl">Day trading: 0.8-1.5%</small></div>
   <div class="form-row"><label>Trailing Stop %</label><input id="cfg-trail" type="number" value="0.8" step="0.1" min="0.3" max="3"> <small class="lbl">Day trading: 0.6-1.2%</small></div>
+  <div style="font-size:7.5pt;color:var(--text3);background:var(--bg4);border-radius:5px;padding:6px 8px;margin:-2px 0 8px;line-height:1.5">&#9888; Powyzsze TP/SL obowiazuje dla BTC/ETH/SOL/XRP. <b style="color:var(--text2)">PEPE ma wlasny, szerszy override: TP 3,5% / SL 1,8%</b> (wieksza naturalna zmiennosc memecoina — wazszy TP/SL powodowalby zbyt czeste wybijanie SL na normalnym szumie ceny).</div>
   <div class="form-row"><label>Max pozycje</label><input id="cfg-maxpos" type="number" value="4" min="1" max="5"></div>
   <div class="form-row"><label>Rozmiar pozycji $</label><input id="cfg-size" type="number" value="15" min="10" max="10000"></div>
   <div class="form-row"><label>Skan co (minuty)</label><input id="cfg-interval" type="number" value="3" min="3" max="30"></div>
@@ -824,6 +825,13 @@ tr:hover td{background:rgba(123,97,255,.04);}
   <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">&#128241; Telegram (opcjonalne)</div>
   <div class="form-row"><label>Bot Token</label><input id="cfg-tg-token" type="password" placeholder="123456:ABC-DEF..."></div>
   <div class="form-row"><label>Chat ID</label><input id="cfg-tg-chat" type="text" placeholder="-100123456"></div>
+  <hr style="border-color:var(--border);margin:12px 0;">
+  <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">🔴 <b>Serwer Cloudflare — realny bot (backend)</b></div>
+  <div style="font-size:7.5pt;color:var(--text3);background:var(--bg4);border-radius:5px;padding:6px 8px;margin-bottom:8px;line-height:1.5">Ten dashboard w przegladarce to symulacja PAPER, dziala tylko gdy karta jest otwarta. Realny handel (rowniez LIVE) wykonuje NIEZALEZNY bot na serwerze Cloudflare Worker — dzialajacy wg WLASNEGO stanu, oddzielnie od tego, co widzisz na tym dashboardzie. Przycisk nizej uruchamia go NA CZYSTO (reset historii/pozycji, modele AI zachowane) w trybie LIVE z ustawieniami TP/SL/rozmiaru z tego panelu.</div>
+  <div class="modal-btns"><button onclick="checkServerStatus()">🔍 Sprawdź stan serwera</button></div>
+  <div id="server-status" style="font-size:8.5pt;min-height:16px;margin-bottom:4px"></div>
+  <div class="modal-btns"><button class="stop-btn" onclick="startServerLive()">🔴 START LIVE (serwer, realne pieniądze)</button></div>
+  <div id="start-live-status" style="font-size:8.5pt;min-height:16px;margin-bottom:4px"></div>
   <hr style="border-color:var(--border);margin:12px 0;">
   <div style="font-size:8.5pt;color:var(--text2);margin-bottom:8px">🔒 <b>PIN dostępu do panelu</b></div>
   <div class="form-row"><label>Aktualny PIN</label><input id="cfg-pin-old" type="password" inputmode="numeric" maxlength="8" placeholder="8 cyfr"></div>
@@ -1376,14 +1384,14 @@ async function analyzeSwing(sym) {
   const price = d.c.at(-1);
 
   const rsiD  = rsi(d.c,14), macdD=macd(d.c), bbD=bband(d.c);
-  const ema50 = ema(d.c,50),  ema200=ema(d.c,200), ema21=ema(d.c,21);
+  const ema20 = ema(d.c,20),  ema50=ema(d.c,50), ema21=ema(d.c,21);
   const atrD  = atr(d.h,d.l,d.c,14);
   // VWAP 4H
   const vwap4h = calcVWAP(h4.h, h4.l, h4.c, h4.v);
   // S/R levels
   const srLevels = calcSRLevels(d.h, d.l, price);
   // Market Regime
-  const regime = detectRegime(d.c, atrD, ema50, ema200);
+  const regime = detectRegime(d.c, atrD, ema20, ema50);
   const rsi4h = rsi(h4.c,14), macd4h=macd(h4.c);
   const rsi1h = rsi(h1.c,14), macd1h=macd(h1.c);
   const confirm1h = macd1h.hist>0 && rsi1h<55;
@@ -1392,7 +1400,7 @@ async function analyzeSwing(sym) {
   const rsiArr4h = rsiArray(h4.c.slice(-30), 14);
   const divD  = rsiDivergence(d.c.slice(-40),  rsiArrD,  38);
   const div4h = rsiDivergence(h4.c.slice(-30), rsiArr4h, 28);
-  const trendD = price>ema200 ? (price>ema50?2:1) : (price>ema50?0:-1);
+  const trendD = price>ema50 ? (price>ema20?2:1) : (price>ema20?0:-1);
   const _vSum20h = d.v.length>=20 ? d.v.slice(-20).reduce((a,b)=>a+b,0) : 0;
   const volR   = (_vSum20h > 0) ? d.v.at(-1)/(_vSum20h/20) : 1;
   const _v4Sum20h = h4.v.length>=20 ? h4.v.slice(-20).reduce((a,b)=>a+b,0) : 0;
@@ -1418,10 +1426,10 @@ async function analyzeSwing(sym) {
   else if (bbD.pos<0.20) { score+=13; why.push('BB dolna strefa'); }
   else if (bbD.pos<0.35) { score+=6; }
   else if (bbD.pos>0.85) { score-=10; why.push('BB górna — ryzyko'); }
-  if      (trendD===2)  { score+=12; why.push('Ponad EMA50+200 — bull'); }
-  else if (trendD===1)  { score+=8;  why.push('Ponad EMA200'); }
+  if      (trendD===2)  { score+=12; why.push('Ponad EMA20+50 — bull'); }
+  else if (trendD===1)  { score+=8;  why.push('Ponad EMA50'); }
   else if (trendD===0)  { score+=3; }
-  else                  { score-=20; why.push('Poniżej EMA200 — bessa'); }
+  else                  { score-=20; why.push('Poniżej EMA50 — bessa'); }
   if      (mom5>0 && mom10<0)    { score+=8; why.push('Momentum odwrócenie'); }
   else if (mom5<-5 && mom10<-10) { score+=5; why.push('Oversold momentum'); }
   else if (mom5>8)               { score-=5; why.push('Zbyt szybki wzrost'); }
@@ -1518,7 +1526,7 @@ async function analyzeSwing(sym) {
   const nbFeatures  = NB.discretize({ rsiD, macdHist:macdD.hist, bbPos:bbD.pos, trendD, mom5, confirm1h });
   const bodyRatio  = Math.abs(d.c[d.c.length-1] - kd[kd.length-1][1]) / (d.h[d.h.length-1] - d.l[d.l.length-1] + 0.001);
   const atrPctFeat = Math.min(1, atrD / price / 0.1);
-  const emaSlopeD  = Math.max(-1, Math.min(1, (ema50/ema200 - 1) * 10));
+  const emaSlopeD  = Math.max(-1, Math.min(1, (ema20/ema50 - 1) * 10));
   const gbmFeatures = [ rsiD/100, macdD.hist>0?1:0, bbD.pos, (trendD+1)/3, mom5/20, mom10/20, confirm1h?1:0, volR/3, obiData.ratio, bodyRatio, atrPctFeat, emaSlopeD ];
 
   // ── NB + GBM predictions ─────────────────────────────────────────
@@ -1606,7 +1614,7 @@ async function analyzeSwing(sym) {
     rsiD:+rsiD.toFixed(1), rsi4h:+rsi4h.toFixed(1), rsi1h:+rsi1h.toFixed(1), confirm1h,
     macdHist:macdD.hist, macdLine:macdD.line,
     bbPos:bbD.pos, bbUpper:bbD.upper, bbLower:bbD.lower,
-    trendD, ema50, ema200, ema21, atrD,
+    trendD, ema20, ema50, ema21, atrD,
     score, finalProb:+finalProb.toFixed(3), buy, shortSignal, shortLevels, levels,
     nbPred, gbmProb:+gbmProb.toFixed(3), qlSugg, aiMethod,
     obiRatio:obiData.ratio, obiScore, obiLabel:OBI.label(obiData.ratio),
@@ -1631,7 +1639,7 @@ function buildGauge(name, val, mn, mx, color, textOnly) {
 }
 
 function aiExplainSignal(sig) {
-  const trendMap = ['ponizej EMA200','ponizej EMA50','ponad EMA200','ponad EMA50+200'];
+  const trendMap = ['ponizej EMA50','ponizej EMA20','ponad EMA50','ponad EMA20+50'];
   const trend = trendMap[Math.max(0,Math.min(3,sig.trendD+1))];
   const prob  = sig.finalProb !== undefined ? sig.finalProb : sig.score/100;
   const probPct = (prob*100).toFixed(1);
@@ -2353,7 +2361,7 @@ async function botCycle() {
   } else if (lastSigs.length > 0) {
     renderSigList(lastSigs);
   } else {
-    var defS = PAIRS.map(function(p){ return {sym:p,score:0,buy:false,trendD:0,rsi14:50,rsiD:50,macd:0,macdHist:0,bbPos:0.5,ema50:0,ema200:0,vwap:0,sr:{s:[],r:[]},why:[],price:0}; });
+    var defS = PAIRS.map(function(p){ return {sym:p,score:0,buy:false,trendD:0,rsi14:50,rsiD:50,macd:0,macdHist:0,bbPos:0.5,ema20:0,ema50:0,vwap:0,sr:{s:[],r:[]},why:[],price:0}; });
     renderSigList(defS);
   }
 
@@ -3050,6 +3058,82 @@ async function testConn() {
   s.innerHTML=lines.map(function(l){return (l.indexOf('OK')>=0)?'<span style="color:var(--green)">'+l+'</span>':'<span style="color:var(--red)">'+l+'</span>';}).join('<br>');
 }
 
+// Serwerowy bot (Cloudflare Worker) jest NIEZALEZNY od tego dashboardu -
+// ponizsze dwie funkcje sa jedynym miejscem, gdzie index.html w ogole
+// komunikuje sie z serwerem poza /save-config i /balance. checkServerStatus
+// robi JEDNORAZOWY odczyt (nie polling) - zero dodatkowego obciazenia
+// Cloudflare poza tym jednym klikiem.
+async function checkServerStatus() {
+  const statusEl = gi('server-status');
+  const url = (gi('cfg-worker').value||'').trim().replace(/\/+$/,'');
+  if (!url) { statusEl.innerHTML = '<span style="color:var(--red)">Brak Worker URL</span>'; return; }
+  statusEl.innerHTML = '<span style="color:var(--gold)">Sprawdzam...</span>';
+  try {
+    const r = await fetchWithTimeout(url + '/state-public', 10000);
+    const d = await r.json();
+    const modeLbl = d.active ? (d.mode==='live' ? 'LIVE (aktywny)' : 'PAPER (aktywny)') : 'NIEAKTYWNY';
+    statusEl.innerHTML = '<span style="color:'+(d.active?'var(--green)':'var(--text3)')+'">Serwer: '+modeLbl+' | pozycje: '+((d.positions||[]).length)+' | trejdy: '+((d.trades||[]).length)+' | ostatni skan: '+(d.lastCycle ? new Date(d.lastCycle).toLocaleString() : '-')+'</span>';
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--red)">Blad: '+e.message+'</span>';
+  }
+}
+
+// START LIVE — jednorazowa, jawna akcja uzytkownika (nigdy automatyczna).
+// Przed startem: (1) sprawdza realny stan serwera i blokuje, jesli sa tam
+// otwarte pozycje (zeby ich nie zgubic przy resecie stanu w /start-live),
+// (2) wymaga wypelnionych kluczy Revolut X, (3) jawne potwierdzenie.
+async function startServerLive() {
+  const statusEl = gi('start-live-status');
+  const url  = (gi('cfg-worker').value||'').trim().replace(/\/+$/,'');
+  const tok  = (gi('cfg-auth-token').value||'swingai-revolut-2024').trim();
+  const key  = (gi('cfg-revx-key').value||'').trim();
+  const priv = (gi('cfg-revx-priv').value||'').trim();
+  if (!url)  { statusEl.innerHTML = '<span style="color:var(--red)">Brak Worker URL</span>'; return; }
+  if (!key || !priv) { statusEl.innerHTML = '<span style="color:var(--red)">Wpisz najpierw API Key i Private Key Revolut X</span>'; return; }
+
+  statusEl.innerHTML = '<span style="color:var(--gold)">Sprawdzam stan serwera...</span>';
+  try {
+    const r = await fetchWithTimeout(url + '/state-public', 10000);
+    const d = await r.json();
+    if ((d.positions||[]).length > 0) {
+      statusEl.innerHTML = '<span style="color:var(--red)">Serwer ma '+d.positions.length+' otwartych pozycji — zamknij je najpierw, inaczej zostana zgubione przy resecie stanu. Przerywam.</span>';
+      return;
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--red)">Nie udalo sie sprawdzic stanu serwera ('+e.message+') — przerywam dla bezpieczenstwa.</span>';
+    return;
+  }
+
+  if (!confirm('UWAGA: to uruchamia REALNY handel na Revolut X (prawdziwe pieniadze) na serwerze Cloudflare, z ustawieniami TP/SL/rozmiaru pozycji z tego panelu. Historia/statystyki na serwerze zostana zresetowane (wytrenowane modele AI zostaja zachowane). Kontynuowac?')) return;
+
+  statusEl.innerHTML = '<span style="color:var(--gold)">Startuje LIVE...</span>';
+  try {
+    const params = new URLSearchParams();
+    params.set('auth', tok);
+    params.set('key', key);
+    params.set('priv', priv);
+    params.set('tp', String(parseFloat(gi('cfg-tp').value) || 2));
+    params.set('sl', String(parseFloat(gi('cfg-sl').value) || 1));
+    params.set('trail', String(parseFloat(gi('cfg-trail').value) || 0.8));
+    params.set('score', String(parseInt(gi('cfg-minscore').value) || 58));
+    params.set('maxp', String(parseInt(gi('cfg-maxpos').value) || 4));
+    params.set('size', String(parseFloat(gi('cfg-size').value) || 15));
+    params.set('riskPct', String(parseFloat(gi('cfg-risk').value) || 2));
+    params.set('fgMin', String(parseInt(gi('cfg-fgmin').value) || 20));
+    const tgTok  = (gi('cfg-tg-token').value||'').trim(); if (tgTok)  params.set('tg', tgTok);
+    const tgChat = (gi('cfg-tg-chat').value||'').trim();  if (tgChat) params.set('tgc', tgChat);
+    const r = await fetchWithTimeout(url + '/start-live?' + params.toString(), 15000);
+    if (r.ok) {
+      statusEl.innerHTML = '<span style="color:var(--green)">Serwer LIVE aktywny. Ten dashboard w przegladarce dalej dziala jako niezalezna symulacja PAPER.</span>';
+      log('Serwerowy bot: START LIVE wyslany', 'ok');
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--red)">Blad startu: HTTP '+r.status+'</span>';
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--red)">Blad: '+e.message+'</span>';
+  }
+}
+
 function resetAll() {
   if (!confirm('Usunac wszystkie pozycje i historie?')) return;
   ST.trades=[]; ST.positions=[]; ST.shortTrades=[]; ST.shortPositions=[]; ST.dailyPnl=0; ST.consLoss=0; ST.globalBlockUntil=0; ST.cooldown={}; ST.paperBal=CFG.paperBal; ST.dailyStartBalance=0;
@@ -3527,13 +3611,13 @@ function calcSRLevels(highs, lows, price) {
 }
 
 // Wykryj rezim rynkowy
-function detectRegime(closes, atrD, ema50val, ema200val) {
+function detectRegime(closes, atrD, ema20val, ema50val) {
   var price = closes[closes.length-1];
   var atrPct = atrD / price;
   if (atrPct > 0.035) return 'volatile';
-  if (Math.abs(ema50val/ema200val - 1) < 0.005 && atrPct < 0.02) return 'sideways';
-  if (price > ema50val && ema50val > ema200val) return 'bull_trend';
-  if (price < ema50val && ema50val < ema200val) return 'bear_trend';
+  if (Math.abs(ema20val/ema50val - 1) < 0.005 && atrPct < 0.02) return 'sideways';
+  if (price > ema20val && ema20val > ema50val) return 'bull_trend';
+  if (price < ema20val && ema20val < ema50val) return 'bear_trend';
   return 'neutral';
 }
 
@@ -4235,7 +4319,7 @@ function trainDecisionWeights(X, y) {
 function renderMLWeights(result) {
   var w = result.weights;
   var base = {rsi:30, macd:20, bb:18, trend:12, mom:8, vol:5};
-  var names = ['RSI 1H (14)','MACD histogram','Bollinger Bands','Trend EMA50/200','Momentum 5/10 swiec','Wolumen spike'];
+  var names = ['RSI 1H (14)','MACD histogram','Bollinger Bands','Trend EMA20/200','Momentum 5/10 swiec','Wolumen spike'];
   var keys  = ['rsi','macd','bb','trend','mom','vol'];
   var html  = '';
   keys.forEach(function(k,i) {
@@ -4676,7 +4760,7 @@ updateAIStatusPanel();
 // Zaladuj saldo i pokaz pary przy starcie strony
 (async function initUI(){
   try { const u=await getUSDC(); if(u>0){ gi('h-usdc').textContent='$'+u.toFixed(2); gi('h-total').textContent='$'+u.toFixed(2); } } catch(e){}
-  const defSigs = PAIRS.map(function(p){ return {sym:p,score:0,buy:false,trendD:0,rsi14:50,rsiD:50,macd:0,macdHist:0,bbPos:0.5,ema50:0,ema200:0,vwap:0,sr:{s:[],r:[]},why:[],price:0}; });
+  const defSigs = PAIRS.map(function(p){ return {sym:p,score:0,buy:false,trendD:0,rsi14:50,rsiD:50,macd:0,macdHist:0,bbPos:0.5,ema20:0,ema50:0,vwap:0,sr:{s:[],r:[]},why:[],price:0}; });
   renderSigList(defSigs);
 })();
 log('SwingAI Bot v2 | '+PAIRS.length+' par | Kelly | Fear&Greed | PumpDump | 1H confirm');
@@ -4698,7 +4782,16 @@ var _audioCtx = null;
 // AudioContext wymaga gestu uzytkownika by wyjsc ze stanu 'suspended' (polityka
 // autoplay przegladarek) - bez tego dzwieki tworzone programowo (np. przy
 // automatycznym zamknieciu pozycji) moglyby nie byc slyszalne mimo ze _soundOn=true.
+// FIX: poprzednia wersja tylko "wznawiala" _audioCtx, jesli juz istnial - ale
+// alerty otwarcia/zamkniecia pozycji (_beep/alertPositionOpen/Close) tworzyly
+// go LENIWIE przy PIERWSZYM alercie, ktory odpala bot automatycznie (nie klik
+// uzytkownika) - context wiec nigdy nie zdazyl zostac odblokowany i dzwiek byl
+// bezglosny mimo poprawnej logiki. Teraz kontekst tworzymy juz PRZY PIERWSZYM
+// kliknieciu gdziekolwiek na stronie, zanim jakikolwiek alert go potrzebuje.
 document.addEventListener('click', function() {
+  if (!_audioCtx) {
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  }
   if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
 }, { once: false });
 
@@ -5091,6 +5184,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </body>
 
 </html>
+
 
 
 
