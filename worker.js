@@ -905,6 +905,10 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   // Teraz to twarda blokada wejscia (buy = false nizej), nie tylko punkty.
   const bearBias = trendD === -1 && rsiD > 50;
   if (bearBias) { score -= 30; why.push('BESSA: long zablokowany (twardy filtr)'); }
+  // bullBias - symetryczny twardy blok dla SHORT w silnym trendzie wzrostowym
+  // z RSI<50 (analogicznie do bearBias blokujacego LONG w bessie). Bez tego
+  // short mogl odpalac sie nawet w hossie - asymetria wzgledem longa.
+  const bullBias = trendD === 2 && rsiD < 50;
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   if (price > vwap4h) { score += 8;  why.push('Ponad VWAP'); }
@@ -1018,7 +1022,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || nearBearOB || (liqSweep && liqSweep.type === 'bearish')),
     (volR > 1.3 || vol4R > 1.3)
   ].filter(Boolean).length;
-  const shortSignal = finalProb <= (1 - minScore/100) && bearConfluence >= 2;
+  const shortSignal = finalProb <= (1 - minScore/100) && bearConfluence >= 2 && !bullBias;
   const shortLevels = shortSignal ? {
     tp: price * (1 - Math.max(cfg.tp, atrD/price*2.5)),
     sl: price * (1 + Math.max(cfg.sl, atrD/price*1.5)),
