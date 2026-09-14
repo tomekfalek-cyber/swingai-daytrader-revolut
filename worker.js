@@ -81,10 +81,13 @@ export default {
       return new Response(null, { status: 204, headers: PIN_PATHS.includes(url.pathname) ? pinCorsHeaders(request) : corsHeaders() });
 
     // AUTENTYKACJA
-    const AUTH_SECRET = env.AUTH_SECRET || 'swingai-revolut-2024';
+    // Brak hardkodowanego fallbacku - jesli env.AUTH_SECRET nie jest ustawiony
+    // jako realny Cloudflare secret, isAuth jest ZAWSZE false (bezpieczne
+    // domyslnie). Ta sama poprawka co w swingai-bot/MEXC.
+    const AUTH_SECRET = env.AUTH_SECRET || null;
     const authHeader  = request.headers.get('Authorization') || '';
     const authParam   = url.searchParams.get('auth') || '';
-    const isAuth = authHeader === 'Bearer ' + AUTH_SECRET || authParam === AUTH_SECRET;
+    const isAuth = !!AUTH_SECRET && (authHeader === 'Bearer ' + AUTH_SECRET || authParam === AUTH_SECRET);
     const publicPaths = ['/', '/state-public', '/market', ...PIN_PATHS];
     if (!isAuth && !publicPaths.includes(url.pathname)) {
       return new Response('Unauthorized', { status: 401, headers: corsHeaders() });
@@ -217,21 +220,27 @@ export default {
     }
 
     if (url.pathname === '/start-live') {
-      const p = url.searchParams;
+      // Klucze API Revolut X i sekret auth NIE ida juz przez query string
+      // (query string trafia do logow serwera/CDN/historii przegladarki) -
+      // wymagamy POST z JSON body. Auth token idzie przez header Authorization
+      // (isAuth juz to sprawdza wyzej), nie przez ?auth=.
+      if (request.method !== 'POST') return new Response('Method Not Allowed - uzyj POST z JSON body', { status: 405, headers: corsHeaders() });
+      let p = {};
+      try { p = await request.json(); } catch(e) {}
       const cfg = defaultConfig();
       cfg.active = true; cfg.mode = 'live'; cfg.startedAt = Date.now();
-      cfg.revxApiKey  = p.get('key')   || '';
-      cfg.revxPrivKey = p.get('priv')  || '';
-      cfg.tp    = parseFloat(p.get('tp')   || '2') / 100;
-      cfg.sl    = parseFloat(p.get('sl')   || '1')  / 100;
-      cfg.trail = parseFloat(p.get('trail')|| '0.8')  / 100;
-      cfg.minScore = parseInt(p.get('score')|| '58');
-      cfg.maxPos   = parseInt(p.get('maxp') || '4');
-      cfg.posSize  = parseFloat(p.get('size')|| '15');
-      cfg.riskPct  = parseFloat(p.get('riskPct')|| '2');
-      cfg.fgMin    = parseInt(p.get('fgMin')|| '20');
-      cfg.tgToken  = p.get('tg')   || '';
-      cfg.tgChat   = p.get('tgc')  || '';
+      cfg.revxApiKey  = p.key   || '';
+      cfg.revxPrivKey = p.priv  || '';
+      cfg.tp    = parseFloat(p.tp   ?? 2) / 100;
+      cfg.sl    = parseFloat(p.sl   ?? 1)  / 100;
+      cfg.trail = parseFloat(p.trail ?? 0.8)  / 100;
+      cfg.minScore = parseInt(p.score ?? 58);
+      cfg.maxPos   = parseInt(p.maxp  ?? 4);
+      cfg.posSize  = parseFloat(p.size ?? 15);
+      cfg.riskPct  = parseFloat(p.riskPct ?? 2);
+      cfg.fgMin    = parseInt(p.fgMin ?? 20);
+      cfg.tgToken  = p.tg   || '';
+      cfg.tgChat   = p.tgc  || '';
       // Jeśli klucze puste - zachowaj z poprzedniej konfiguracji
       const oldCfg = await getConfig(env);
       if (!cfg.revxApiKey  && oldCfg.revxApiKey)  cfg.revxApiKey  = oldCfg.revxApiKey;
@@ -254,23 +263,27 @@ export default {
     }
 
     if (url.pathname === '/save-config') {
-      const p = url.searchParams;
+      // Klucze API Revolut X i sekret auth NIE ida juz przez query string -
+      // wymagamy POST z JSON body. Auth token idzie przez header Authorization.
+      if (request.method !== 'POST') return new Response('Method Not Allowed - uzyj POST z JSON body', { status: 405, headers: corsHeaders() });
+      let p = {};
+      try { p = await request.json(); } catch(e) {}
       const cfg = await getConfig(env);
       // Bez tego przelacznik trybu w ustawieniach na dashboardzie nic nie robil -
       // ta sama luka co byla w swingai-bot/MEXC przed dzisiejsza poprawka.
-      if (p.get('mode') === 'paper' || p.get('mode') === 'live') cfg.mode = p.get('mode');
-      if (p.get('key'))   cfg.revxApiKey  = p.get('key');
-      if (p.get('priv'))  cfg.revxPrivKey = p.get('priv');
-      if (p.get('tg'))    cfg.tgToken     = p.get('tg');
-      if (p.get('tgc'))   cfg.tgChat      = p.get('tgc');
-      if (p.get('tp'))    cfg.tp       = parseFloat(p.get('tp'))    / 100;
-      if (p.get('sl'))    cfg.sl       = parseFloat(p.get('sl'))    / 100;
-      if (p.get('trail')) cfg.trail    = parseFloat(p.get('trail')) / 100;
-      if (p.get('score')) cfg.minScore = parseInt(p.get('score'));
-      if (p.get('maxp'))  cfg.maxPos   = parseInt(p.get('maxp'));
-      if (p.get('size'))  cfg.posSize  = parseFloat(p.get('size'));
-      if (p.get('riskPct')) cfg.riskPct = parseFloat(p.get('riskPct'));
-      if (p.get('fgMin'))    cfg.fgMin   = parseInt(p.get('fgMin'));
+      if (p.mode === 'paper' || p.mode === 'live') cfg.mode = p.mode;
+      if (p.key)   cfg.revxApiKey  = p.key;
+      if (p.priv)  cfg.revxPrivKey = p.priv;
+      if (p.tg)    cfg.tgToken     = p.tg;
+      if (p.tgc)   cfg.tgChat      = p.tgc;
+      if (p.tp    !== undefined) cfg.tp       = parseFloat(p.tp)    / 100;
+      if (p.sl    !== undefined) cfg.sl       = parseFloat(p.sl)    / 100;
+      if (p.trail !== undefined) cfg.trail    = parseFloat(p.trail) / 100;
+      if (p.score !== undefined) cfg.minScore = parseInt(p.score);
+      if (p.maxp  !== undefined) cfg.maxPos   = parseInt(p.maxp);
+      if (p.size  !== undefined) cfg.posSize  = parseFloat(p.size);
+      if (p.riskPct !== undefined) cfg.riskPct = parseFloat(p.riskPct);
+      if (p.fgMin   !== undefined) cfg.fgMin   = parseInt(p.fgMin);
       await env.SWINGAI_REVOLUT_KV.put('config', JSON.stringify(cfg));
       return new Response(redirectHTML('Konfiguracja zapisana!'), { headers: {'Content-Type':'text/html;charset=utf-8'} });
     }
@@ -1086,22 +1099,30 @@ async function checkPositions(cfg, state, env, ql) {
       const _tpPct = pos.tp > 0 ? (pos.tp - pos.entry) / pos.entry * 100 : cfg.tp * 100;
       if (!reason && pnlPct >= _tpPct * 0.5 && !pos.partialClosed && !pos.partialSelling) {
         pos.partialSelling = true;
-        const halfQty = pos.qty / 2;
-        const halfPnl = (price - pos.entry) * halfQty;
-        const halfSize = pos.size / 2;
+        const halfQtyReq = pos.qty / 2;
+        // Uzywamy REALNEGO wyniku zlecenia (fillPrice/fillQty) z Revolut X gdy
+        // handel jest live - zlecenie moze wypelnic sie na innej cenie/ilosci niz
+        // zamowione (poprzednio kod ignorowal wynik revxMarketSell i liczyl
+        // qty/PnL na zyczeniowym halfQty i cenie mark, co rozjezdzalo sledzona
+        // pozycje z rzeczywistoscia na koncie).
+        let fillPrice = price, fillQty = halfQtyReq;
         try {
           if (cfg.mode === 'live' && cfg.revxApiKey && cfg.revxPrivKey) {
-            await revxMarketSell(pos.sym, halfQty, cfg);
+            const res = await revxMarketSell(pos.sym, halfQtyReq, cfg);
+            fillPrice = res.price;
+            fillQty   = res.qty;
           }
-          pos.qty = halfQty;
-          pos.size = halfSize;
+          const realizedPnl = (fillPrice - pos.entry) * fillQty;
+          const closedSize  = pos.size * (fillQty / pos.qty);
+          pos.qty  = pos.qty - fillQty;
+          pos.size = pos.size - closedSize;
           pos.partialClosed = true;
           pos.partialSelling = false;
           pos.sl = pos.entry * (1 + FEE * 2);
           if (cfg.mode === 'paper') {
-            state.paperBalance = (state.paperBalance || 0) + halfSize + halfPnl;
+            state.paperBalance = (state.paperBalance || 0) + closedSize + realizedPnl;
           }
-          addLog(state, 'PARTIAL TP ' + pos.sym + ' +$' + halfPnl.toFixed(2) + ' (' + pnlPct.toFixed(1) + '%) — reszta jedzie dalej', 'ok');
+          addLog(state, 'PARTIAL TP ' + pos.sym + ' +$' + realizedPnl.toFixed(2) + ' (' + pnlPct.toFixed(1) + '%) — reszta jedzie dalej', 'ok');
         } catch(e) {
           pos.partialSelling = false;
           addLog(state, 'Partial TP SELL error: ' + e.message, 'err');
@@ -1734,9 +1755,12 @@ function makeGBM(saved) {
       const X=[], y=[];
       trades.forEach(t => { if (t.gbmFeatures&&t.gbmFeatures.length===12) { X.push(t.gbmFeatures); y.push(t.pnl>0?1:0); } });
       if (X.length < 20) return false;
-      const si = Math.floor(X.length*0.7);
       // train = najstarsze 70% (chronologicznie pierwsze), OOS = najnowsze 30% (nieznane podczas treningu)
-      // trades posortowane najnowszy→najstarszy, więc X[0]=najnowszy → slice(si) = stare, slice(0,si) = nowe
+      // trades posortowane najnowszy→najstarszy, więc X[0]=najnowszy → granica musi byc
+      // przy 30% (nie 70%!), zeby slice(si)=stare 70% trafilo do treningu, a
+      // slice(0,si)=nowe 30% do OOS. Wczesniej si=0.7*len dawalo odwrotnie: trening na
+      // najstarszych 30%, a "OOS" liczone na najnowszych 70% (odwrotnie niz w komentarzu).
+      const si = Math.floor(X.length*0.3);
       const Xt=X.slice(si), yt=y.slice(si);
       const Xoos=X.slice(0,si), yoos=y.slice(0,si);
       this.trees=[];
