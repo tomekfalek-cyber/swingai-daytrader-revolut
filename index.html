@@ -805,7 +805,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
 <div class="modal">
   <h2><span style="background:linear-gradient(135deg,var(--accent),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent">&#9881; Konfiguracja SwingAI Revolut X</span></h2>
   <div class="alert-box">&#128272; Klucze API przechowywane tylko w <b>localStorage</b> — nie wychodzą poza Cloudflare Worker.<br>&#9888; Bot handluje <b>WYŁĄCZNIE kryptowalutami</b> (BTC/ETH/SOL…) — akcje, ETF, surowce są chronione.</div>
-  <div style="background:rgba(123,97,255,.06);border:1px solid rgba(123,97,255,.25);border-radius:6px;padding:10px 12px;margin-bottom:10px;"><div style="font-size:8pt;color:var(--accent);margin-bottom:7px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">&#9881; Cloudflare Worker</div><div class="form-row"><label>Worker URL</label><input id="cfg-worker" type="text" placeholder="https://swingai-revolut.xxx.workers.dev"></div><div class="form-row"><label>Auth Token</label><input id="cfg-auth-token" type="text" placeholder="swingai-revolut-2024"></div></div>
+  <div style="background:rgba(123,97,255,.06);border:1px solid rgba(123,97,255,.25);border-radius:6px;padding:10px 12px;margin-bottom:10px;"><div style="font-size:8pt;color:var(--accent);margin-bottom:7px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">&#9881; Cloudflare Worker</div><div class="form-row"><label>Worker URL</label><input id="cfg-worker" type="text" placeholder="https://swingai-revolut.xxx.workers.dev"></div><div class="form-row"><label>Auth Token</label><input id="cfg-auth-token" type="text" placeholder="wklej tutaj swoj AUTH_SECRET"></div></div>
   <div style="background:rgba(123,97,255,.08);border:2px solid rgba(123,97,255,.35);border-radius:6px;padding:10px 12px;margin-bottom:10px;"><div style="font-size:8pt;color:var(--accent);margin-bottom:7px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">&#11044; Revolut X — Ed25519</div><div class="form-row"><label>API Key</label><input id="cfg-revx-key" type="password" placeholder="Revolut X API Key"></div><div style="margin-bottom:8px"><div style="font-size:7.5pt;color:var(--text2);margin-bottom:4px">Private Key PEM — generuj: <code style="background:var(--bg4);padding:1px 5px;border-radius:3px">openssl genpkey -algorithm ed25519</code></div><textarea id="cfg-revx-priv" rows="4" placeholder="-----BEGIN PRIVATE KEY-----" style="width:100%;box-sizing:border-box;background:var(--bg4);color:var(--text);border:1px solid var(--border2);border-radius:5px;padding:6px 8px;font-size:7.5pt;font-family:'JetBrains Mono',monospace;resize:vertical;outline:none;"></textarea></div><div style="font-size:7.5pt;color:var(--text3);line-height:1.5">Public key wgraj w: Revolut X → Settings → API Keys (uprawnienia: Crypto Spot READ + TRADE)</div></div>
   <div class="form-row"><label>Tryb handlu</label><select id="cfg-mode"><option value="paper">&#128221; PAPER — symulacja</option><option value="live">&#128176; LIVE — Revolut X (realne transakcje)</option></select></div>
   <hr style="border-color:var(--border);margin:12px 0;">
@@ -894,7 +894,7 @@ async function fetchWithTimeout(url, ms, opts) {
 
 // ── CONFIG ─────────────────────────────────────────────────────────
 let CFG = {
-  workerUrl:'', authToken:'swingai-revolut-2024', mode:'paper',
+  workerUrl:'', authToken:'', mode:'paper',
   revxApiKey:'', revxPrivKey:'',
   // Day trading: dużo ciaśniejsze poziomy niż swing (tam 12%/5%/6%) - pozycje
   // trzymane w ramach jednej sesji, nie tygodni. Ta sama poprawka co w worker.js.
@@ -1007,7 +1007,7 @@ async function tgSend(msg) {
   if (!CFG.tgToken || !CFG.tgChat || !msg) return;
   msg = msg.substring(0, 4000);
   try {
-    await fetchWithTimeout((CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/tg-send?auth='+encodeURIComponent(CFG.authToken||'swingai-revolut-2024'), {
+    await fetchWithTimeout((CFG.workerUrl||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'')+'/tg-send?auth='+encodeURIComponent(CFG.authToken||''), {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({chat_id:CFG.tgChat, text:msg, parse_mode:'HTML'})
     });
@@ -1143,7 +1143,7 @@ async function getUSDC() {
   if (CFG.mode === 'paper') return ST.paperBal;
   if (!CFG.workerUrl) return 0;
   try {
-    const tok = CFG.authToken || 'swingai-revolut-2024';
+    const tok = CFG.authToken || '';
     const r = await fetchWithTimeout(CFG.workerUrl + '/balance?auth=' + encodeURIComponent(tok), 10000);
     if (!r.ok) return 0;
     const d = await r.json();
@@ -1250,35 +1250,30 @@ function atr(h,l,c,p=14) {
 // ── RSI DYWERGENCJA ────────────────────────────────────────────────
 // Bycza: cena robi niższy dół (lower low), RSI robi wyższy dół (higher low)
 // Niedźwiedzia: cena robi wyższy szczyt, RSI robi niższy szczyt
-function rsiDivergence(closes, rsiArr, lookback) {
-  lookback = lookback || 14;
-  var n = closes.length;
-  if (n < lookback + 2) return { bull: false, bear: false };
-
-  // Znajdź dwa ostatnie lokalne minima ceny (dołki)
-  var priceLows = [];
-  var priceHighs = [];
-  for (var i = Math.max(1, n - lookback); i < n - 1; i++) {
-    if (closes[i] < closes[i-1] && closes[i] < closes[i+1]) {
-      priceLows.push({ i: i, v: closes[i], r: rsiArr[i] });
-    }
-    if (closes[i] > closes[i-1] && closes[i] > closes[i+1]) {
-      priceHighs.push({ i: i, v: closes[i], r: rsiArr[i] });
-    }
+// IDENTYCZNY algorytm jak rsiDivergence() w worker.js: wymaga min. 0.1% ruchu
+// ceny (nie samej zmiany kierunku) i roznicy RSI >=3 pkt (nie >=2). Bez tego
+// dashboard wykrywal dywergencje czesciej niz zywy bot na tych samych danych.
+function rsiDivergence(prices, rsiArr, lookback) {
+  lookback = lookback || 20;
+  var n = prices.length;
+  if (n < lookback) return { bull: false, bear: false };
+  var pS = prices.slice(-lookback), rS = rsiArr.slice(-lookback);
+  var len = pS.length;
+  var localMins = [], localMaxs = [];
+  for (var i = 1; i < len - 1; i++) {
+    if (pS[i] < pS[i-1] && pS[i] < pS[i+1]) localMins.push(i);
+    if (pS[i] > pS[i-1] && pS[i] > pS[i+1]) localMaxs.push(i);
   }
-
   var bull = false, bear = false;
-  // Bycza dywergencja: cena lower low, RSI higher low
-  if (priceLows.length >= 2) {
-    var p1 = priceLows[priceLows.length - 2];
-    var p2 = priceLows[priceLows.length - 1];
-    if (p2.v < p1.v && p2.r > p1.r + 2) bull = true; // min 2 pkt RSI różnicy
+  if (localMins.length >= 2) {
+    var i1 = localMins[localMins.length - 2];
+    var i2 = localMins[localMins.length - 1];
+    if (pS[i2] < pS[i1] * 0.999 && rS[i2] > rS[i1] + 3) bull = true;
   }
-  // Niedźwiedzia dywergencja: cena higher high, RSI lower high
-  if (priceHighs.length >= 2) {
-    var h1 = priceHighs[priceHighs.length - 2];
-    var h2 = priceHighs[priceHighs.length - 1];
-    if (h2.v > h1.v && h2.r < h1.r - 2) bear = true;
+  if (localMaxs.length >= 2) {
+    var j1 = localMaxs[localMaxs.length - 2];
+    var j2 = localMaxs[localMaxs.length - 1];
+    if (pS[j2] > pS[j1] * 1.001 && rS[j2] < rS[j1] - 3) bear = true;
   }
   return { bull: bull, bear: bear };
 }
@@ -2017,7 +2012,12 @@ async function checkPositions() {
         if (pnlPct >= tpPct * 0.5 && !pos.partialClosed) {
           const halfQty  = pos.qty / 2;
           const halfSize = (pos.size || 0) / 2;
-          const halfPnl  = (cp - pos.entry) * halfQty;
+          const grossPnl = (cp - pos.entry) * halfQty;
+          // Realny koszt round-trip (kupno+sprzedaz) na zamykanej polowie - ta sama
+          // formula co w closeTrade() - bez tego partial TP zawyzal statystyki
+          // (win rate/avg P/L) i dane treningowe AI o brakujaca oplate.
+          const feeCost  = halfSize*FEE + (halfSize+grossPnl)*FEE;
+          const halfPnl  = grossPnl - feeCost;
           pos.qty  = halfQty;
           pos.size = halfSize; // zaktualizuj size do pozostałej połowy
           pos.partialClosed = true;
@@ -2026,6 +2026,16 @@ async function checkPositions() {
           if (CFG.mode === 'paper') {
             ST.paperBal = (ST.paperBal || 0) + halfSize + halfPnl;
           }
+          ST.dailyPnl = (ST.dailyPnl || 0) + halfPnl;
+          // Zapisz jako transakcje - bez tego wynik partial TP nigdzie nie trafial
+          // (ani do historii, ani do danych treningowych NB/GBM/QL/ADAPTIVE), a
+          // ST.paperBal rozjezdzal sie z suma ST.trades.pnl bez mozliwosci weryfikacji.
+          ST.trades.unshift({sym:pos.sym, entry:pos.entry, exit:cp, qty:halfQty,
+            pnl:+halfPnl.toFixed(4), pnlPct:+(halfPnl/halfSize*100).toFixed(2),
+            durH:((Date.now()-pos.entryTs)/3600000).toFixed(1), reason:'PARTIAL TP',
+            score:pos.score, finalProb:pos.finalProb, aiMethod:pos.aiMethod,
+            nbFeatures:pos.nbFeatures, gbmFeatures:pos.gbmFeatures,
+            nbLabel:pos.nbPredLabel||'NEUTRAL', ts:Date.now()});
           log('PARTIAL TP ' + pos.sym + ' +$' + halfPnl.toFixed(2) + ' (' + pnlPct.toFixed(1) + '%) - reszta jedzie dalej', 'ok');
           toast('PARTIAL TP ' + pos.sym.replace('USDC','/USDC'), '+$'+halfPnl.toFixed(2)+' ('+pnlPct.toFixed(1)+'%)', 'ok', 4000);
           saveAll();
@@ -2935,7 +2945,7 @@ function onModeChange(val) {
 }
 function openSettings() {
   gi('cfg-worker').value=CFG.workerUrl||'';
-  gi('cfg-auth-token').value=CFG.authToken||'swingai-revolut-2024';
+  gi('cfg-auth-token').value=CFG.authToken||'';
   gi('cfg-revx-key').value=CFG.revxApiKey||'';
   gi('cfg-revx-priv').value=CFG.revxPrivKey||'';
   gi('cfg-mode').value=CFG.mode||'paper';
@@ -2955,7 +2965,7 @@ function openSettings() {
   gi('modal-cfg').className='overlay open';
 }
 async function fetchRevolutOrders() {
-  const tok = CFG.authToken || 'swingai-revolut-2024';
+  const tok = CFG.authToken || '';
   const statusEl = gi('orders-last-update');
   if(statusEl) statusEl.textContent = 'Pobieranie...';
   // Saldo
@@ -3005,7 +3015,7 @@ function saveSettings() {
   if(!isFinite(rawRisk)||rawRisk<0.1||rawRisk>50) errors.push('Risk: 0.1-50%');
   if(errors.length>0){gi('cfg-status').innerHTML='<span style="color:var(--red)">Błąd: '+errors.join('; ')+'</span>';return;}
   CFG.workerUrl=gi('cfg-worker').value.trim().replace(/\/+$/,'');
-  CFG.authToken=gi('cfg-auth-token').value.trim()||'swingai-revolut-2024';
+  CFG.authToken=gi('cfg-auth-token').value.trim()||'';
   CFG.revxApiKey=gi('cfg-revx-key').value.trim();
   CFG.revxPrivKey=gi('cfg-revx-priv').value.trim();
   CFG.mode=gi('cfg-mode').value;
@@ -3024,22 +3034,23 @@ function saveSettings() {
   // KV zostawal na starych wartosciach niezaleznie od tego co wybrano w UI.
   try {
     if (CFG.workerUrl) {
-      const _params = new URLSearchParams();
-      _params.set('auth', CFG.authToken || 'swingai-revolut-2024');
-      if (CFG.mode === 'paper' || CFG.mode === 'live') _params.set('mode', CFG.mode);
-      if (CFG.revxApiKey)  _params.set('key',  CFG.revxApiKey);
-      if (CFG.revxPrivKey) _params.set('priv', CFG.revxPrivKey);
-      if (CFG.tgToken) _params.set('tg', CFG.tgToken);
-      if (CFG.tgChat)  _params.set('tgc', CFG.tgChat);
-      _params.set('tp', (CFG.tp*100).toString());
-      _params.set('sl', (CFG.sl*100).toString());
-      _params.set('trail', (CFG.trail*100).toString());
-      _params.set('score', CFG.minScore.toString());
-      _params.set('maxp', CFG.maxPos.toString());
-      _params.set('size', CFG.posSize.toString());
-      _params.set('riskPct', CFG.riskPct.toString());
-      _params.set('fgMin', CFG.fgMin.toString());
-      fetch(CFG.workerUrl + '/save-config?' + _params.toString()).catch(function(){});
+      // POST + JSON body + header Authorization - klucze API Revolut X i sekret
+      // auth nie ida juz przez query string (trafialoby do logow/CDN/historii
+      // przegladarki). Ta sama poprawka co w worker.js.
+      const _body = {};
+      if (CFG.mode === 'paper' || CFG.mode === 'live') _body.mode = CFG.mode;
+      if (CFG.revxApiKey)  _body.key  = CFG.revxApiKey;
+      if (CFG.revxPrivKey) _body.priv = CFG.revxPrivKey;
+      if (CFG.tgToken) _body.tg  = CFG.tgToken;
+      if (CFG.tgChat)  _body.tgc = CFG.tgChat;
+      _body.tp = CFG.tp*100; _body.sl = CFG.sl*100; _body.trail = CFG.trail*100;
+      _body.score = CFG.minScore; _body.maxp = CFG.maxPos; _body.size = CFG.posSize;
+      _body.riskPct = CFG.riskPct; _body.fgMin = CFG.fgMin;
+      fetch(CFG.workerUrl + '/save-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (CFG.authToken||'') },
+        body: JSON.stringify(_body)
+      }).catch(function(){});
     }
   } catch(e) { console.warn('sync do workera nieudany:', e); }
   gi('cfg-status').textContent='Zapisano';gi('cfg-status').style.color='var(--green)';
@@ -3055,7 +3066,7 @@ function saveSettings() {
 async function testConn() {
   const s=gi('cfg-status');s.textContent='Testuje...';s.style.color='var(--gold)';
   const url=(gi('cfg-worker').value||'').trim().replace(/\/+/,'');
-  const tok=(gi('cfg-auth-token').value||'swingai-revolut-2024').trim();
+  const tok=(gi('cfg-auth-token').value||'').trim();
   const lines=[];
   try{const pb=(url||'https://swingai-revolut.tomek-falek.workers.dev').replace(/\/+$/,'');const r=await fetchWithTimeout(pb+'/market?path='+encodeURIComponent('/1.0/public/tickers')+'&qs='+encodeURIComponent('symbols=BTC/USDC'),{signal:AbortSignal.timeout(10000)});const d=await r.json();const btc=(d.data||[])[0];lines.push('Revolut X OK | BTC: $'+(btc?(+btc.last_price).toFixed(0):'?'));}catch(e){lines.push('Revolut X ERR: '+e.message);}
   if(url){try{const r=await fetchWithTimeout(url+'/status?auth='+encodeURIComponent(tok),{signal:AbortSignal.timeout(10000)});if(r.ok){const d=await r.json();lines.push('Worker OK | tryb: '+(d.config&&d.config.mode||'?')+' iter: '+(d.state&&d.state.iter||0));if(d.state&&d.state.liveBalance)lines.push('Saldo USDC: $'+d.state.liveBalance.toFixed(2));}else{lines.push('Worker HTTP '+r.status);}}catch(e){lines.push('Worker ERR: '+e.message);}}else{lines.push('Brak Worker URL');}
@@ -3089,7 +3100,7 @@ async function checkServerStatus() {
 async function startServerLive() {
   const statusEl = gi('start-live-status');
   const url  = (gi('cfg-worker').value||'').trim().replace(/\/+$/,'');
-  const tok  = (gi('cfg-auth-token').value||'swingai-revolut-2024').trim();
+  const tok  = (gi('cfg-auth-token').value||'').trim();
   const key  = (gi('cfg-revx-key').value||'').trim();
   const priv = (gi('cfg-revx-priv').value||'').trim();
   if (!url)  { statusEl.innerHTML = '<span style="color:var(--red)">Brak Worker URL</span>'; return; }
@@ -3112,21 +3123,26 @@ async function startServerLive() {
 
   statusEl.innerHTML = '<span style="color:var(--gold)">Startuje LIVE...</span>';
   try {
-    const params = new URLSearchParams();
-    params.set('auth', tok);
-    params.set('key', key);
-    params.set('priv', priv);
-    params.set('tp', String(parseFloat(gi('cfg-tp').value) || 2));
-    params.set('sl', String(parseFloat(gi('cfg-sl').value) || 1));
-    params.set('trail', String(parseFloat(gi('cfg-trail').value) || 0.8));
-    params.set('score', String(parseInt(gi('cfg-minscore').value) || 58));
-    params.set('maxp', String(parseInt(gi('cfg-maxpos').value) || 4));
-    params.set('size', String(parseFloat(gi('cfg-size').value) || 15));
-    params.set('riskPct', String(parseFloat(gi('cfg-risk').value) || 2));
-    params.set('fgMin', String(parseInt(gi('cfg-fgmin').value) || 20));
-    const tgTok  = (gi('cfg-tg-token').value||'').trim(); if (tgTok)  params.set('tg', tgTok);
-    const tgChat = (gi('cfg-tg-chat').value||'').trim();  if (tgChat) params.set('tgc', tgChat);
-    const r = await fetchWithTimeout(url + '/start-live?' + params.toString(), 15000);
+    // POST + JSON body + header Authorization - klucze API Revolut X i sekret auth
+    // nie ida juz przez query string. Ta sama poprawka co w worker.js.
+    const body = {
+      key: key, priv: priv,
+      tp: parseFloat(gi('cfg-tp').value) || 2,
+      sl: parseFloat(gi('cfg-sl').value) || 1,
+      trail: parseFloat(gi('cfg-trail').value) || 0.8,
+      score: parseInt(gi('cfg-minscore').value) || 58,
+      maxp: parseInt(gi('cfg-maxpos').value) || 4,
+      size: parseFloat(gi('cfg-size').value) || 15,
+      riskPct: parseFloat(gi('cfg-risk').value) || 2,
+      fgMin: parseInt(gi('cfg-fgmin').value) || 20
+    };
+    const tgTok  = (gi('cfg-tg-token').value||'').trim(); if (tgTok)  body.tg  = tgTok;
+    const tgChat = (gi('cfg-tg-chat').value||'').trim();  if (tgChat) body.tgc = tgChat;
+    const r = await fetchWithTimeout(url + '/start-live', 15000, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+      body: JSON.stringify(body)
+    });
     if (r.ok) {
       statusEl.innerHTML = '<span style="color:var(--green)">Serwer LIVE aktywny. Ten dashboard w przegladarce dalej dziala jako niezalezna symulacja PAPER.</span>';
       log('Serwerowy bot: START LIVE wyslany', 'ok');
@@ -3299,68 +3315,66 @@ var PAIR_PARAMS = {
 //  Co 20 zamknietych transakcji wagi sa przeliczane wg celnosci modelu.
 //  Startowe wagi = takie same jak w worker.js (score:1, nb:0.8, gbm:0.9, obi:0.3, ql:0.5),
 //  zeby klient i backend liczyly ten sam finalProb dla identycznych danych.
+//  IDENTYCZNY algorytm przeliczania jak rebalanceEnsemble() w worker.js: win-rate
+//  x expectancyFactor (sredni %PnL) na OSTATNICH 20 transakcjach (nie kumulatywna
+//  historia od zawsze), wagi NIE normalizowane do sumy 1 (wSum dzieli przy uzyciu,
+//  patrz nizej). Poprzednio dashboard mial DWA rozne, niezaleznie licza mechanizmy
+//  nadpisujace to samo ENSEMBLE_W (ten tutaj + drugi wewnatrz ADAPTIVE.retrain) -
+//  ten drugi zostal usuniety jako duplikat/sprzeczny.
 var ENSEMBLE_W = {
   score: 1, nb: 0.8, gbm: 0.9, obi: 0.3, ql: 0.5,
-  // Historia predykcji kazdego modelu: { correct, total }
-  _hist: { score:{c:0,n:0}, nb:{c:0,n:0}, gbm:{c:0,n:0}, obi:{c:0,n:0}, ql:{c:0,n:0} },
-  _WINDOW: 20,   // okno ostatnich transakcji do oceny modelu
+  _WINDOW: 20,
 
-  // Po zamknieciu transakcji zaktualizuj history i przelicz wagi
   record: function(pos, won) {
-    var h = this._hist;
-    // Score: przewidywal BUY (finalProb >= threshold) — uznajemy ze ok jesli pos.finalProb >= 0.60
-    h.score.n++; if (won && pos.finalProb >= 0.60) h.score.c++; else if (!won && pos.finalProb < 0.60) h.score.c++;
-    // NB: pos.nbPred.label === 'BUY' -> przewidywal wzrost
-    if (pos.nbFeatures) {
-      h.nb.n++;
-      var nbWasBuy = pos.nbPredLabel === 'BUY';
-      if ((won && nbWasBuy) || (!won && !nbWasBuy)) h.nb.c++;
-    }
-    // GBM: gbmProb >= 0.5 -> przewidywal wzrost
-    if (typeof pos.gbmProb === 'number') {
-      h.gbm.n++;
-      var gbmWasBuy = pos.gbmProb >= 0.5;
-      if ((won && gbmWasBuy) || (!won && !gbmWasBuy)) h.gbm.c++;
-    }
-    // OBI: obiRatio >= 0.5 -> przewidywal wzrost
-    if (typeof pos.obiRatio === 'number') {
-      h.obi.n++;
-      var obiWasBuy = pos.obiRatio >= 0.5;
-      if ((won && obiWasBuy) || (!won && !obiWasBuy)) h.obi.c++;
-    }
-    // QL: qlSugg === 'BUY'
-    if (pos.qlSig) {
-      h.ql.n++;
-      var qlWasBuy = pos.qlSuggAction === 'BUY';
-      if ((won && qlWasBuy) || (!won && !qlWasBuy)) h.ql.c++;
-    }
-    // Przelicz wagi co _WINDOW transakcji
-    var total = h.score.n;
-    if (total > 0 && total % this._WINDOW === 0) this._recalc();
+    if (ST.trades.length >= this._WINDOW && ST.trades.length % this._WINDOW === 0) this._recalc();
   },
 
   _recalc: function() {
-    var h = this._hist;
-    var acc = {
-      score: h.score.n >= 5 ? h.score.c / h.score.n : 0.45,
-      nb:    h.nb.n    >= 5 ? h.nb.c    / h.nb.n    : 0.20,
-      gbm:   h.gbm.n   >= 5 ? h.gbm.c   / h.gbm.n   : 0.20,
-      obi:   h.obi.n   >= 5 ? h.obi.c   / h.obi.n   : 0.10,
-      ql:    h.ql.n    >= 5 ? h.ql.c    / h.ql.n    : 0.05
-    };
-    var sum = acc.score + acc.nb + acc.gbm + acc.obi + acc.ql;
-    if (sum <= 0) return;
-    // Normalizuj do sumy 1.0
-    this.score = +(acc.score / sum).toFixed(3);
-    this.nb    = +(acc.nb    / sum).toFixed(3);
-    this.gbm   = +(acc.gbm   / sum).toFixed(3);
-    this.obi   = +(acc.obi   / sum).toFixed(3);
-    this.ql    = +(acc.ql    / sum).toFixed(3);
+    var recentTrades = ST.trades.slice(0, this._WINDOW);
+    if (recentTrades.length < 10) return;
+
+    function expectancyFactor(matchFn) {
+      var matched = recentTrades.filter(matchFn);
+      if (matched.length < 3) return 1;
+      var avgPnlPct = matched.reduce(function(s,t){ return s+(t.pnlPct||0); }, 0) / matched.length;
+      return Math.max(0.6, Math.min(1.4, 1 + avgPnlPct/15));
+    }
+
+    var nbCorrect=0, nbTotal=0;
+    recentTrades.forEach(function(t){
+      if (!t.nbLabel) return;
+      nbTotal++;
+      if ((t.nbLabel==='BUY' && t.pnl>0) || (t.nbLabel!=='BUY' && t.pnl<=0)) nbCorrect++;
+    });
+    if (nbTotal>=5) {
+      var nbAcc = nbCorrect/nbTotal;
+      var nbExp = expectancyFactor(function(t){ return t.nbLabel==='BUY'; });
+      this.nb = +Math.max(0.3, Math.min(1.5, nbAcc*2*nbExp)).toFixed(2);
+    }
+
+    var gbmAcc = GBM.accuracyOOS>0 ? GBM.accuracyOOS/100 : 0.5;
+    var gbmExp = expectancyFactor(function(t){ return typeof t.gbmProb==='number' && t.gbmProb>=0.5; });
+    this.gbm = +Math.max(0.3, Math.min(1.5, gbmAcc*2*gbmExp)).toFixed(2);
+
+    var SCORE_BUY_THRESHOLD = 60;
+    var scoreCorrect=0, scoreTotal=0;
+    recentTrades.forEach(function(t){
+      if (typeof t.score !== 'number') return;
+      scoreTotal++;
+      if ((t.score>=SCORE_BUY_THRESHOLD && t.pnl>0) || (t.score<SCORE_BUY_THRESHOLD && t.pnl<=0)) scoreCorrect++;
+    });
+    if (scoreTotal>=5) {
+      var scoreAcc = scoreCorrect/scoreTotal;
+      var scoreExp = expectancyFactor(function(t){ return typeof t.score==='number' && t.score>=SCORE_BUY_THRESHOLD; });
+      this.score = +Math.max(0.3, Math.min(1.5, scoreAcc*2*scoreExp)).toFixed(2);
+    }
+
+    this.obi = 0.3;
     log('ENSEMBLE_W przeliczone: Score='+this.score+' NB='+this.nb+' GBM='+this.gbm+' OBI='+this.obi+' QL='+this.ql, 'ok');
   },
 
   save: function() {
-    return { score:this.score, nb:this.nb, gbm:this.gbm, obi:this.obi, ql:this.ql, hist:this._hist };
+    return { score:this.score, nb:this.nb, gbm:this.gbm, obi:this.obi, ql:this.ql };
   },
   load: function(d) {
     if (!d) return;
@@ -3369,7 +3383,6 @@ var ENSEMBLE_W = {
     if (typeof d.gbm   === 'number') this.gbm   = d.gbm;
     if (typeof d.obi   === 'number') this.obi   = d.obi;
     if (typeof d.ql    === 'number') this.ql    = d.ql;
-    if (d.hist) this._hist = d.hist;
   }
 };
 
@@ -3580,23 +3593,10 @@ function calcVWAP(highs, lows, closes, volumes) {
   return vol > 0 ? tpVol / vol : closes[closes.length-1];
 }
 
-// Sklastruj sasiadujace pivoty (w tolerancji %) w jeden precyzyjny poziom (usrednienie),
-// zeby uniknac kilku nakladajacych sie, "rozmytych" linii blisko tej samej ceny.
-function clusterLevels(values, tolPct) {
-  var sorted = values.slice().sort(function(a,b){ return a-b; });
-  var clusters = [];
-  sorted.forEach(function(v){
-    var last = clusters[clusters.length-1];
-    if (last && Math.abs(v/last.avg - 1) <= tolPct) {
-      last.sum += v; last.n += 1; last.avg = last.sum/last.n;
-    } else {
-      clusters.push({ sum: v, n: 1, avg: v });
-    }
-  });
-  return clusters.map(function(c){ return c.avg; });
-}
-
-// Wykryj lokalne pivoty S/R z ostatnich 50 swiec 1H
+// Wykryj lokalne pivoty S/R z ostatnich 50 swiec 1H.
+// IDENTYCZNY algorytm jak calcSRLevels() w worker.js (bez klastrowania pivotow -
+// dashboard mial dodatkowy krok klastrowania, ktorego zywy bot nie ma, co dawalo
+// rozne poziomy S/R na tych samych danych).
 function calcSRLevels(highs, lows, price) {
   var n = Math.min(50, highs.length);
   var start = highs.length - n;
@@ -3607,10 +3607,8 @@ function calcSRLevels(highs, lows, price) {
     if (lows[i] < lows[i-1] && lows[i] < lows[i-2] && lows[i] < lows[i+1] && lows[i] < lows[i+2])
       pivotLows.push(lows[i]);
   }
-  var clusteredHighs = clusterLevels(pivotHighs, 0.0025);
-  var clusteredLows  = clusterLevels(pivotLows, 0.0025);
-  var above = clusteredHighs.filter(function(v){ return v > price; }).sort(function(a,b){ return a-b; }).slice(0,3);
-  var below = clusteredLows.filter(function(v){ return v < price; }).sort(function(a,b){ return b-a; }).slice(0,2);
+  var above = pivotHighs.filter(function(v){ return v > price; }).sort(function(a,b){ return a-b; }).slice(0,3);
+  var below = pivotLows.filter(function(v){ return v < price; }).sort(function(a,b){ return b-a; }).slice(0,2);
   return { above: above, below: below, all: above.concat(below) };
 }
 
@@ -3655,7 +3653,10 @@ var GBM = {
   train: function(X, y) {
     if (X.length < 20) return false;
     this.trees = [];
-    // Walk-forward: trenuj na 70%, waliduj na 30% (out-of-sample)
+    // Walk-forward: trenuj na 70% (chronologicznie starsze), waliduj na 30% (nowsze,
+    // out-of-sample). WYMAGA X/y w porzadku chronologicznie rosnacym (stare->nowe) -
+    // to obowiazek wywolujacego (patrz ADAPTIVE.retrain, ktore odwraca ST.trades przed
+    // wywolaniem GBM.train, bo tam dane sa najnowszy->najstarszy).
     var splitIdx = Math.floor(X.length * 0.70);
     var Xtr = X.slice(0, splitIdx), ytr = y.slice(0, splitIdx);
     var Xval = X.slice(splitIdx),   yval = y.slice(splitIdx);
@@ -3840,6 +3841,12 @@ var ADAPTIVE = {
       .filter(function(p){ return p.x.length > 0; });
     var X = gbmPairs.map(function(p){ return p.x; });
     var y = gbmPairs.map(function(p){ return p.y; });
+    // ST.trades jest najnowszy->najstarszy (unshift przy kazdym zamknieciu pozycji),
+    // ale GBM.train (i X.slice(-200) nizej) wymaga porzadku chronologicznie rosnacego
+    // (stare->nowe) - inaczej walk-forward split trenuje na nowszych danych i
+    // "waliduje" na starszych (odwrotnie), a slice(-200) brałoby najstarsze 200
+    // zamiast najnowszych 200. Odwracamy raz, tutaj.
+    X.reverse(); y.reverse();
 
     // Deklaracja PRZED użyciem (walk-forward check potrzebny też niżej)
     var lastRefit = ST.lastGbmRefit || 0;
@@ -3847,17 +3854,26 @@ var ADAPTIVE = {
     var _needWfRefit = (tradesSinceRefit >= 50 || !GBM.trained);
     if (X.length >= 20 && !_needWfRefit) GBM.train(X, y);
 
-    // Dostosuj minScore na podstawie win rate ostatnich 20 transakcji
-    var recent = ST.trades.slice(0,20);
-    var wr = recent.filter(function(t){ return t.pnl>0; }).length / Math.max(recent.length,1);
-    if (wr < 0.4 && this.minScoreAdjusted !== null) {
-      this.minScoreAdjusted = Math.min(88, (this.minScoreAdjusted||CFG.minScore) + 3);
-      log('Adaptive: win rate '+Math.round(wr*100)+'% — zaostrzam min score do '+this.minScoreAdjusted,'warn');
-    } else if (wr > 0.65 && recent.length >= 10 && this.minScoreAdjusted !== null) {
-      this.minScoreAdjusted = Math.max(50, (this.minScoreAdjusted||CFG.minScore) - 2);
-      log('Adaptive: win rate '+Math.round(wr*100)+'% — luzuje min score do '+this.minScoreAdjusted,'ok');
-    } else if (this.minScoreAdjusted === null) {
+    // Dostosuj minScore na podstawie win rate ostatnich 20 transakcji.
+    // IDENTYCZNY algorytm jak computeAdaptiveMinScore() w worker.js: zawsze liczony
+    // od CFG.minScore (base), NIE kumulatywnie od wlasnej poprzedniej wartosci.
+    // Poprzednio dashboard liczyl to kumulatywnie (+3/-2 od ostatniej wartosci, do
+    // 88/50) a zywy bot bezpamieciowo (+5/-3 od base, do 75/50) - dwa rozne
+    // algorytmy nadpisujace ten sam stan/pole.
+    if (ST.trades.length < 10) {
       this.minScoreAdjusted = CFG.minScore;
+    } else {
+      var recent = ST.trades.slice(0,20);
+      var wr = recent.filter(function(t){ return t.pnl>0; }).length / recent.length;
+      if (wr < 0.4) {
+        this.minScoreAdjusted = Math.min(75, CFG.minScore + 5);
+        log('Adaptive: win rate '+Math.round(wr*100)+'% — zaostrzam min score do '+this.minScoreAdjusted,'warn');
+      } else if (wr > 0.65) {
+        this.minScoreAdjusted = Math.max(50, CFG.minScore - 3);
+        log('Adaptive: win rate '+Math.round(wr*100)+'% — luzuje min score do '+this.minScoreAdjusted,'ok');
+      } else {
+        this.minScoreAdjusted = CFG.minScore;
+      }
     }
 
     // Walk-forward: GBM re-trenuje na oknie krocącym co 50 tradów
@@ -3869,24 +3885,11 @@ var ADAPTIVE = {
       log('GBM walk-forward refit: '+wfX.length+' tradów, OOS='+GBM.accuracyOOS+'%','ok');
     }
 
-    // Ensemble rebalancing co 20 tradów
-    if (ST.trades.length >= 20 && ST.trades.length % 20 === 0) {
-      var recent20 = ST.trades.slice(0,20);
-      var nbCorrect=0, nbTotal=0;
-      recent20.forEach(function(t){
-        if (!t.nbLabel) return;
-        nbTotal++;
-        if ((t.nbLabel==='BUY'&&t.pnl>0)||(t.nbLabel!=='BUY'&&t.pnl<=0)) nbCorrect++;
-      });
-      if (nbTotal>=5 && ENSEMBLE_W) {
-        var nbAcc = nbCorrect/nbTotal;
-        var gbmAcc = GBM.accuracyOOS>0 ? GBM.accuracyOOS/100 : 0.5;
-        ENSEMBLE_W.nb  = +Math.max(0.3,Math.min(1.5,nbAcc*2)).toFixed(2);
-        ENSEMBLE_W.gbm = +Math.max(0.3,Math.min(1.5,gbmAcc*2)).toFixed(2);
-        log('Ensemble rebalanced: nb='+ENSEMBLE_W.nb+' gbm='+ENSEMBLE_W.gbm,'ok');
-        updateAIStatusPanel();
-      }
-    }
+    // Ensemble rebalancing - usunieto duplikat z tego miejsca. ENSEMBLE_W.record()
+    // (wolane z closeTrade przy kazdym zamknieciu pozycji) samo przelicza wagi co
+    // 20 transakcji - dwa niezalezne mechanizmy nadpisujace to samo ENSEMBLE_W
+    // (ten i ten tutaj) dawaly niespójne wyniki w zaleznosci od tego, ktory
+    // odpalil sie ostatni.
 
     log('AI retrained: NB='+nbOk+' GBM='+GBM.accuracy+'% (OOS: '+(GBM.accuracyOOS||'?')+'%) trades='+trades.length, 'ok');
     saveModels(); // zapisz do localStorage
