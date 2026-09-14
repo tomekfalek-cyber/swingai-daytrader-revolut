@@ -1384,7 +1384,7 @@ async function analyzeSwing(sym) {
   const price = d.c.at(-1);
 
   const rsiD  = rsi(d.c,14), macdD=macd(d.c), bbD=bband(d.c);
-  const ema20 = ema(d.c,20),  ema50=ema(d.c,50), ema21=ema(d.c,21);
+  const ema20 = ema(d.c,20),  ema50=ema(d.c,50);
   const atrD  = atr(d.h,d.l,d.c,14);
   // VWAP 4H
   const vwap4h = calcVWAP(h4.h, h4.l, h4.c, h4.v);
@@ -1450,6 +1450,10 @@ async function analyzeSwing(sym) {
   if (div4h.bear) { score -= 7;  why.push('RSI dywergencja niedzwiedzia 4H'); }
   const bearBias = trendD===-1 && rsiD>50;
   if (bearBias) { score-=30; why.push('BESSA: long wymaga silnego potwierdzenia'); }
+  // bullBias - symetryczny twardy blok dla SHORT w silnym trendzie wzrostowym
+  // z RSI<50 (analogicznie do bearBias blokujacego LONG w bessie). Bez tego
+  // short mogl odpalac sie nawet w hossie - asymetria wzgledem longa.
+  const bullBias = trendD===2 && rsiD<50;
 
   // ── SMART MONEY CONCEPTS ──────────────────────────────────────────
   const structure   = detectStructure(d.h, d.l, d.c);
@@ -1602,7 +1606,7 @@ async function analyzeSwing(sym) {
     (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || nearBearOB || (liqSweep && liqSweep.type === 'bearish')),
     (volR > 1.3 || vol4R > 1.3)
   ].filter(Boolean).length;
-  const shortSignal = finalProb <= (1 - effectiveMinScore/100) && bearConfluence >= 2;
+  const shortSignal = finalProb <= (1 - effectiveMinScore/100) && bearConfluence >= 2 && !bullBias;
   const shortLevels = shortSignal ? {
     tp: price * (1 - Math.max(CFG.tp, atrD/price*2.5)),
     sl: price * (1 + Math.max(CFG.sl, atrD/price*1.5)),
@@ -1614,7 +1618,7 @@ async function analyzeSwing(sym) {
     rsiD:+rsiD.toFixed(1), rsi4h:+rsi4h.toFixed(1), rsi1h:+rsi1h.toFixed(1), confirm1h,
     macdHist:macdD.hist, macdLine:macdD.line,
     bbPos:bbD.pos, bbUpper:bbD.upper, bbLower:bbD.lower,
-    trendD, ema20, ema50, ema21, atrD,
+    trendD, ema20, ema50, atrD,
     score, finalProb:+finalProb.toFixed(3), buy, shortSignal, shortLevels, levels,
     nbPred, gbmProb:+gbmProb.toFixed(3), qlSugg, aiMethod,
     obiRatio:obiData.ratio, obiScore, obiLabel:OBI.label(obiData.ratio),
@@ -1639,7 +1643,7 @@ function buildGauge(name, val, mn, mx, color, textOnly) {
 }
 
 function aiExplainSignal(sig) {
-  const trendMap = ['ponizej EMA50','ponizej EMA20','ponad EMA50','ponad EMA20+50'];
+  const trendMap = ['ponizej EMA20 i EMA50','ponad EMA20 (pod EMA50)','ponad EMA50 (pod EMA20)','ponad EMA20+50'];
   const trend = trendMap[Math.max(0,Math.min(3,sig.trendD+1))];
   const prob  = sig.finalProb !== undefined ? sig.finalProb : sig.score/100;
   const probPct = (prob*100).toFixed(1);
@@ -4319,7 +4323,7 @@ function trainDecisionWeights(X, y) {
 function renderMLWeights(result) {
   var w = result.weights;
   var base = {rsi:30, macd:20, bb:18, trend:12, mom:8, vol:5};
-  var names = ['RSI 1H (14)','MACD histogram','Bollinger Bands','Trend EMA20/200','Momentum 5/10 swiec','Wolumen spike'];
+  var names = ['RSI 1H (14)','MACD histogram','Bollinger Bands','Trend EMA20/50','Momentum 5/10 swiec','Wolumen spike'];
   var keys  = ['rsi','macd','bb','trend','mom','vol'];
   var html  = '';
   keys.forEach(function(k,i) {
@@ -5068,19 +5072,19 @@ var INLINE_CHART = {
       ctx.fillText(pLabel>=1?pLabel.toFixed(2):pLabel.toFixed(5), PAD.l-4, y2+4);
     }
 
-    // EMA50
-    var ema50=[]; var k50=2/(50+1);
-    for(var ei=0;ei<n;ei++){ ema50[ei]=ei===0?klines[ei].c:(klines[ei].c*k50+ema50[ei-1]*(1-k50)); }
-    ctx.beginPath(); ctx.strokeStyle='rgba(255,179,71,0.7)'; ctx.lineWidth=1.5;
-    for(var ei2=0;ei2<n;ei2++){ var ex=PAD.l+ei2*bGap+bGap/2; if(ei2===0) ctx.moveTo(ex,yP(ema50[ei2])); else ctx.lineTo(ex,yP(ema50[ei2])); }
+    // EMA20
+    var ema20=[]; var k20=2/(20+1);
+    for(var ei=0;ei<n;ei++){ ema20[ei]=ei===0?klines[ei].c:(klines[ei].c*k20+ema20[ei-1]*(1-k20)); }
+    ctx.beginPath(); ctx.strokeStyle='rgba(255,95,0,0.5)'; ctx.lineWidth=1.5;
+    for(var ei2=0;ei2<n;ei2++){ var ex=PAD.l+ei2*bGap+bGap/2; if(ei2===0) ctx.moveTo(ex,yP(ema20[ei2])); else ctx.lineTo(ex,yP(ema20[ei2])); }
     ctx.stroke();
 
-    // EMA200
-    if(n>=200){
-      var ema200=[]; var k200=2/(200+1);
-      for(var ej=0;ej<n;ej++){ ema200[ej]=ej===0?klines[ej].c:(klines[ej].c*k200+ema200[ej-1]*(1-k200)); }
-      ctx.beginPath(); ctx.strokeStyle='rgba(255,95,0,0.5)'; ctx.lineWidth=1.5;
-      for(var ej2=0;ej2<n;ej2++){ var ex2=PAD.l+ej2*bGap+bGap/2; if(ej2===0) ctx.moveTo(ex2,yP(ema200[ej2])); else ctx.lineTo(ex2,yP(ema200[ej2])); }
+    // EMA50
+    if(n>=50){
+      var ema50=[]; var k50=2/(50+1);
+      for(var ej=0;ej<n;ej++){ ema50[ej]=ej===0?klines[ej].c:(klines[ej].c*k50+ema50[ej-1]*(1-k50)); }
+      ctx.beginPath(); ctx.strokeStyle='rgba(255,179,71,0.7)'; ctx.lineWidth=1.5;
+      for(var ej2=0;ej2<n;ej2++){ var ex2=PAD.l+ej2*bGap+bGap/2; if(ej2===0) ctx.moveTo(ex2,yP(ema50[ej2])); else ctx.lineTo(ex2,yP(ema50[ej2])); }
       ctx.stroke();
     }
 
