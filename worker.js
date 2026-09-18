@@ -5,23 +5,25 @@
 // a cena wykonania, i zero kolizji limitu zapytan z botem MEXC/swing (ktory uzywa
 // Krakena) dzialajacym na tym samym koncie Cloudflare.
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // KONFIGURACJA
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// Kraken public API — nie blokuje CF Workers
-// Pary Kraken: XBTUSDT, ETHUSDT itd. | Handel Revolut X: BTC/USDC — mapowanie w revxInstrument()
-// Day trading: mniej par niz w wersji swingowej, bo skan jest 3x czestszy (co 3
-// min zamiast 10) - trzyma budzet zapytan/dzien i limit KV w bezpiecznych granicach
-// mimo wiekszej czestotliwosci. Najbardziej plynne pary, najlepsze dla intraday.
-// PEPEUSDT dodany po potwierdzeniu, ze Revolut X notuje PEPE/USDC - traktowany
-// jako "satelitarna" para wysokiego ryzyka: wlasna grupa korelacji (nie koreluje
-// bezposrednio z BTC/ETH/SOL/XRP na tyle, by wymagac blokady), szerszy tp/sl i
-// wyzszy minScore w PAIR_PARAMS_DEFAULT (nizej), a filtr pump/dump jest juz
-// ATR-relative (patrz isPumpDump) - automatycznie dopasowuje sie do jego
-// naturalnie wyzszej zmiennosci bez recznego przeliczania.
+// ═══════════════════════════════════════════════════════════════════════════
 const PAIRS = ['XBTUSDT','ETHUSDT','SOLUSDT','XRPUSDT','PEPEUSDT'];
-const FEE   = 0.002;
-const TIMEOUT_MS = 8 * 3600000; // 8h - day trading: pozycja zamykana w ramach jednej sesji, nie tygodniami jak w swingu
+
+// FIX #1: Realna stawka taker na Revolut X to 0.09% (0.0009), NIE 0.2%.
+// Poprzednia wartosc 0.002 zawyzala koszty 2.2x, co systematycznie odrzucalo
+// zyskownych kandydatow (gate'y R:R, break-even SL, Kelly sizing), bo bot
+// liczyl, ze transakcja musi zarobic duzo wiecej, niz realnie potrzebuje.
+const FEE = 0.0009;
+
+// FIX #2: Modelowanie poslizgu (slippage) w trybie paper. W trybie live
+// slippage jest naturalnie wliczony, bo uzywamy realnej ceny fill z Revolut X.
+const SLIPPAGE_PAPER = 0.0005;
+
+// FIX #3: Minimalny oczekiwany zysk netto (po kosztach) zanim otworzymy pozycje.
+const MIN_COST_COVERAGE_RATIO = 3.0;
+
+const TIMEOUT_MS = 8 * 3600000; // 8h day trading
 
 const CORR_GROUPS = [
   ['XBTUSDT'],
@@ -33,19 +35,6 @@ const CORR_GROUPS = [
   ['PEPEUSDT']
 ];
 
-// tp/sl przeskalowane ze starych wartosci swingowych (10-18%/4-7%) na skale
-// day-trading, proporcjonalnie do defaultConfig() (tp:0.02/sl:0.01) - relatywne
-// roznice miedzy parami (BTC najcieszej, DOGE najszerzej) zostaly zachowane.
-// minScore podniesiony +4 wzgledem wersji startowej (58-62 -> 62-66) - przy
-// niskim progu i skanie co 3 min przechodzilo za duzo szumu; wyzszy prog +
-// wymog confluence (analyzeSwing) maja ograniczyc liczbe slabych wejsc bez
-// utraty czestotliwosci potrzebnej do day tradingu.
-// UWAGA: tp/sl tutaj to HARDKODOWANY OVERRIDE ktory ma priorytet nad
-// ustawieniami cfg.tp/cfg.sl z panelu (patrz calcDynamicLevels) - dla par
-// bez pola tp/sl ponizej, bot uzywa Twoich wartosci z konfiguracji.
-// Tylko PEPEUSDT ma wlasny override (memecoin - wieksza naturalna
-// zmiennosc niz reszta par, wymaga szerszego floor tp/sl niz standardowe
-// ustawienie, inaczej SL wybijalby na normalnym szumie ceny).
 const PAIR_PARAMS_DEFAULT = {
   'XBTUSDT':  { minScore:66 },
   'ETHUSDT':  { minScore:64 },
@@ -58,12 +47,11 @@ const PAIR_PARAMS_DEFAULT = {
   'PEPEUSDT': { tp:0.035, sl:0.018, minScore:68 }
 };
 
-// Revolut X base URL
 const REVX_BASE = 'https://revx.revolut.com/api/1.0';
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // GŁÓWNY HANDLER
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runBotCycle(env));
@@ -71,19 +59,10 @@ export default {
 
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    // Endpointy PIN-gate/sesji wolane przez index.html na github.io - to jest
-    // request CROSS-SITE (inna domena niz workers.dev), wiec cookie sesji musi byc
-    // SameSite=None+Secure i CORS musi zwracac KONKRETNE origin (nie '*') razem z
-    // Allow-Credentials:true - inaczej przegladarka po cichu nie wysle/nie odczyta
-    // cookie i caly PIN-gate nie zadziala pomimo poprawnej logiki po stronie serwera.
     const PIN_PATHS = ['/verify-pin', '/change-pin', '/session-check', '/clear-stats'];
     if (request.method === 'OPTIONS')
       return new Response(null, { status: 204, headers: PIN_PATHS.includes(url.pathname) ? pinCorsHeaders(request) : corsHeaders() });
 
-    // AUTENTYKACJA
-    // Brak hardkodowanego fallbacku - jesli env.AUTH_SECRET nie jest ustawiony
-    // jako realny Cloudflare secret, isAuth jest ZAWSZE false (bezpieczne
-    // domyslnie). Ta sama poprawka co w swingai-bot/MEXC.
     const AUTH_SECRET = env.AUTH_SECRET || null;
     const authHeader  = request.headers.get('Authorization') || '';
     const authParam   = url.searchParams.get('auth') || '';
@@ -93,12 +72,6 @@ export default {
       return new Response('Unauthorized', { status: 401, headers: corsHeaders() });
     }
 
-    // â”€â”€ PIN GATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // Identyczny mechanizm jak w swingai-bot/MEXC: PIN (hash SHA-256) w KV pod
-    // 'pinHash', sesja w cookie (KV 'sess_<id>'), limit 5 nieudanych prob/15 min
-    // na IP w KV 'pinfail_<ip>'. Roznica: tam Worker sam serwuje HTML dashboardu
-    // (ten sam origin), tutaj index.html jest statycznym plikiem na GitHub Pages
-    // (INNY origin) - stad SameSite=None+Secure i pinCorsHeaders() zamiast Lax+'*'.
     if (url.pathname === '/verify-pin' && request.method === 'POST') {
       const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
       const rl = await checkPinRateLimit(env, ip);
@@ -145,10 +118,6 @@ export default {
       return pinJsonResp({ ok:true }, 200, request);
     }
 
-    // Manualne czyszczenie statystyk/modeli AI - uzytkownik testowal recznymi
-    // zamknieciami pozycji, co zafalszowalo winrate i wytrenowane modele (NB/GBM/QL
-    // uczyly sie na tych testowych tradach). Reset NIE dotyka aktywnych pozycji ani
-    // config (klucze API, PIN) - tylko historii/statystyk/modeli.
     if (url.pathname === '/clear-stats' && request.method === 'POST') {
       const sessionOk = await isValidSession(env, request);
       if (!sessionOk) return pinJsonResp({ ok:false, error:'Sesja wygasla — zaloguj sie ponownie' }, 401, request);
@@ -170,12 +139,13 @@ export default {
       state.cooldown = {};
       state.globalBlockUntil = 0;
       state.lastGbmRefit = 0;
+      // BUG FIX #1: reset markera ensemble rebalansowania razem z calym state
+      state.lastEnsembleRebalance = 0;
       addLog(state, 'Statystyki i modele AI wyczyszczone recznie (pozycje i config bez zmian)', 'warn');
       await env.SWINGAI_REVOLUT_KV.put('state', JSON.stringify(state));
       return pinJsonResp({ ok:true }, 200, request);
     }
 
-    // Dashboard
     if (url.pathname === '/') {
       return new Response(
         '<meta http-equiv="refresh" content="0;url=https://tomekfalek-cyber.github.io/swingai-revolut/">',
@@ -183,7 +153,6 @@ export default {
       );
     }
 
-    // State public — dla GitHub Pages dashboard
     if (url.pathname === '/state-public') {
       const cfg   = await getConfig(env);
       const state = await getState(env);
@@ -220,10 +189,6 @@ export default {
     }
 
     if (url.pathname === '/start-live') {
-      // Klucze API Revolut X i sekret auth NIE ida juz przez query string
-      // (query string trafia do logow serwera/CDN/historii przegladarki) -
-      // wymagamy POST z JSON body. Auth token idzie przez header Authorization
-      // (isAuth juz to sprawdza wyzej), nie przez ?auth=.
       if (request.method !== 'POST') return new Response('Method Not Allowed - uzyj POST z JSON body', { status: 405, headers: corsHeaders() });
       let p = {};
       try { p = await request.json(); } catch(e) {}
@@ -241,20 +206,17 @@ export default {
       cfg.fgMin    = parseInt(p.fgMin ?? 20);
       cfg.tgToken  = p.tg   || '';
       cfg.tgChat   = p.tgc  || '';
-      // Jeśli klucze puste - zachowaj z poprzedniej konfiguracji
       const oldCfg = await getConfig(env);
       if (!cfg.revxApiKey  && oldCfg.revxApiKey)  cfg.revxApiKey  = oldCfg.revxApiKey;
       if (!cfg.revxPrivKey && oldCfg.revxPrivKey) cfg.revxPrivKey = oldCfg.revxPrivKey;
       if (!cfg.tgToken && oldCfg.tgToken)         cfg.tgToken     = oldCfg.tgToken;
       if (!cfg.tgChat  && oldCfg.tgChat)          cfg.tgChat      = oldCfg.tgChat;
       await env.SWINGAI_REVOLUT_KV.put('config', JSON.stringify(cfg));
-      // Reset stanu ale zachowaj modele AI
       const oldState = await getState(env);
       const freshState = defaultState();
       freshState.nb  = oldState.nb  || null;
       freshState.gbm = oldState.gbm || null;
       freshState.ql  = oldState.ql  || null;
-      // peakBalanceMode fix: reset peak when switching to live
       freshState.peakBalance = 0;
       freshState.peakBalanceMode = 'live';
       await env.SWINGAI_REVOLUT_KV.put('state', JSON.stringify(freshState));
@@ -263,14 +225,10 @@ export default {
     }
 
     if (url.pathname === '/save-config') {
-      // Klucze API Revolut X i sekret auth NIE ida juz przez query string -
-      // wymagamy POST z JSON body. Auth token idzie przez header Authorization.
       if (request.method !== 'POST') return new Response('Method Not Allowed - uzyj POST z JSON body', { status: 405, headers: corsHeaders() });
       let p = {};
       try { p = await request.json(); } catch(e) {}
       const cfg = await getConfig(env);
-      // Bez tego przelacznik trybu w ustawieniach na dashboardzie nic nie robil -
-      // ta sama luka co byla w swingai-bot/MEXC przed dzisiejsza poprawka.
       if (p.mode === 'paper' || p.mode === 'live') cfg.mode = p.mode;
       if (p.key)   cfg.revxApiKey  = p.key;
       if (p.priv)  cfg.revxPrivKey = p.priv;
@@ -376,15 +334,6 @@ export default {
       }
     }
 
-
-    // Proxy dla wykresow dashboard — dane z Bybit v5 (Revolut X /public/candles i
-    // /public/order-book wymagaja auth mimo nazwy "public", zweryfikowane 2026-09-02:
-    // HTTP 401 "Unauthenticated access"; dziala bez klucza tylko /public/tickers).
-    // Frontend (index.html) nadal wysyla "stare", Revolut-podobne sciezki/parametry
-    // (np. path=/1.0/public/candles/BTC/USDC) — ZERO zmian w index.html; ten proxy
-    // tlumaczy je na realne zapytania Bybit i przeksztalca odpowiedz z powrotem do
-    // ksztaltu JSON, ktorego juz oczekuje istniejacy kod klienta (getKlines/getTicker/
-    // OBI.fetch w index.html) - stad brak potrzeby dotykania frontendu.
     if (url.pathname === '/market') {
       const path = url.searchParams.get('path') || '';
       const qs   = url.searchParams.get('qs')   || '';
@@ -438,40 +387,30 @@ export default {
       }
     }
 
-    // Fallback
     return new Response('SwingAI Revolut X Worker — OK', { headers: corsHeaders() });
   }
 };
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // GŁÓWNA LOGIKA CYKLU
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 async function runBotCycle(env) {
   const cfg   = await getConfig(env);
   if (!cfg.active) return;
   const state = await getState(env);
 
-  // Mutex — zapobiega równoległemu uruchomieniu dwóch cykli.
-  // UWAGA: TTL musi być bezpiecznie dłuższy niż realistyczny NAJGORSZY (ale wciąż
-  // normalny, nie zawieszony) czas 1 cyklu. Przy 8 parach x kilka interwałów klines
-  // x timeout + sleep(700ms) między parami + podpisywanie Ed25519 dla Revolut X,
-  // cykl w wolnych warunkach sieciowych może zająć kilka minut. Zbyt krótki TTL
-  // (poprzednio 120s) mógł zwalniać blokadę zanim poprzedni cykl faktycznie się
-  // skończył, pozwalając na nakładanie się cykli — dokładnie problem, któremu ta
-  // blokada ma zapobiegać.
   const lockKey = 'bot_running_lock';
   const lockVal = await env.SWINGAI_REVOLUT_KV.get(lockKey);
   if (lockVal) {
     console.log('Bot already running, skipping cycle');
     return;
   }
-  await env.SWINGAI_REVOLUT_KV.put(lockKey, '1', { expirationTtl: 480 }); // TTL 8 min auto-release
+  await env.SWINGAI_REVOLUT_KV.put(lockKey, '1', { expirationTtl: 480 });
   try {
 
   state.iter  = (state.iter || 0) + 1;
   addLog(state, '--- Skan #' + state.iter + ' ---');
 
-  // Daily reset
   const todayUTC = new Date().toISOString().slice(0, 10);
   if (state.dailyDate !== todayUTC) {
     state.dailyDate         = todayUTC;
@@ -479,12 +418,10 @@ async function runBotCycle(env) {
     state.dailyStartBalance = 0;
   }
 
-  // Drawdown Circuit Breaker
   const currentBalance = cfg.mode === 'live'
     ? (state.liveBalance > 0 ? state.liveBalance : (cfg.paperBalance || 1000))
     : (state.paperBalance > 0 ? state.paperBalance : (cfg.paperBalance || 1000));
 
-  // peakBalanceMode fix: nie myl paper-peak z live-peak po przełączeniu trybu
   if (state.peakBalanceMode && state.peakBalanceMode !== cfg.mode) {
     state.peakBalance = 0;
     state.peakBalanceMode = cfg.mode;
@@ -497,13 +434,10 @@ async function runBotCycle(env) {
   const drawdown = state.peakBalance > 0 ? (state.peakBalance - currentBalance) / state.peakBalance : 0;
   const drawdownBlocked = (state.drawdownBlock || 0) > Date.now();
   if (drawdown > 0.15 && !drawdownBlocked) {
-    // Day trading: 6h zamiast 24h (swing) - wciaz znaczaca pauza po powaznym
-    // drawdown, ale nie blokujaca praktycznie calego nastepnego dnia handlowego.
     state.drawdownBlock = Date.now() + 6 * 3600000;
     addLog(state, 'Circuit breaker: -15% drawdown — blokada BUY 6h', 'err');
   }
 
-  // Załaduj modele AI
   const nb  = makeNB(state.nb);
   const gbm = makeGBM(state.gbm);
   const ql  = makeQL(state.ql);
@@ -512,17 +446,13 @@ async function runBotCycle(env) {
   const adaptiveMinScore = state.adaptiveMinScore || cfg.minScore;
 
   try {
-    // 1. Fear & Greed
     const fg = await getFearGreed(state);
 
-    // 2. BTC Guard
     const btcDrop = await btcDropGuard();
     if (btcDrop) addLog(state, 'BTC Guard aktywny — brak nowych long na altcoinach', 'warn');
 
-    // 3. Sprawdź otwarte pozycje
     await checkPositions(cfg, state, env, ql);
 
-    // 4. Skanuj pary
     const sigs = [];
     for (const sym of PAIRS) {
       try {
@@ -545,7 +475,6 @@ async function runBotCycle(env) {
       volR: s.volR, vol4R: s.vol4R, mom5: s.mom5, mom10: s.mom10
     }));
 
-    // 5. OtwĂłrz pozycje
     const dailyBase = state.dailyStartBalance > 0 ? state.dailyStartBalance : (cfg.paperBalance || 1000);
     const dailyLossOk = (state.dailyPnl || 0) > -0.05 * dailyBase;
 
@@ -564,7 +493,6 @@ async function runBotCycle(env) {
       }
     }
 
-    // 6. Walk-forward retraining
     const trades = state.trades || [];
     nb.trainFromTrades(trades);
 
@@ -574,17 +502,21 @@ async function runBotCycle(env) {
       return tsN > lastRefit;
     }).length;
     if ((tradesSinceRefit >= 50 && trades.length >= 20) || (!gbm.trained && trades.length >= 20)) {
-      gbm.trainFromTrades(trades.slice(0, 200)); // FIX 7: slice(0,200) = najnowsze (trades posortowane od najnowszego)
+      gbm.trainFromTrades(trades.slice(0, 200));
       state.lastGbmRefit = Date.now();
-      addLog(state, 'GBM walk-forward refit: ' + Math.min(trades.length,200) + ' tradĂłw, OOS=' + gbm.accuracyOOS + '%', 'ok');
+      addLog(state, 'GBM walk-forward refit: ' + Math.min(trades.length,200) + ' tradów, OOS=' + gbm.accuracyOOS + '%', 'ok');
     }
 
-    // Ensemble rebalancing co 20 tradĂłw
-    if (trades.length >= 20 && trades.length % 20 === 0) {
+    // BUG FIX #1: Ensemble rebalansowal sie kazdy cykl przez cala godzine gdy
+    // trades.length = 20, 40, 60... (a cykl leci co 3 min). Teraz odpala sie
+    // RAZ na kazdy nowy prog 20 tradow, nie za kazdym skanem.
+    const milestone = Math.floor(trades.length / 20) * 20;
+    if (trades.length >= 20 && milestone > (state.lastEnsembleRebalance || 0)) {
       const ewUpd = rebalanceEnsemble(ew, nb, gbm, trades.slice(0, 20));
       if (ewUpd) {
         Object.assign(ew, ewUpd);
-        addLog(state, 'Ensemble rebalanced: nb=' + ew.nb.toFixed(2) + ' gbm=' + ew.gbm.toFixed(2), 'ok');
+        state.lastEnsembleRebalance = milestone;
+        addLog(state, 'Ensemble rebalanced @' + milestone + ' tradów: nb=' + ew.nb.toFixed(2) + ' gbm=' + ew.gbm.toFixed(2), 'ok');
       }
     }
 
@@ -592,10 +524,28 @@ async function runBotCycle(env) {
     state.gbm = gbm.save();
     state.ql  = ql.save();
     state.ensembleW = ew;
-    state.pairParams = pairParams;
+
+    // BUG FIX #6: pairParams bylo martwym no-opem (nic go nie aktualizowalo).
+    // Teraz realnie dostosowuje minScore per-para na podstawie win-rate ostatnich
+    // 30 tradow na danej parze. Clamp ±6 punktow od defaultu, zeby pojedyncze
+    // serie nie rozchwialy progow w nieskonczonosc.
+    const learnedPairParams = {};
+    for (const sym of PAIRS) {
+      const symTrades = trades.filter(t => t.sym === sym).slice(0, 30);
+      const base = (PAIR_PARAMS_DEFAULT[sym] && PAIR_PARAMS_DEFAULT[sym].minScore) || 62;
+      if (symTrades.length < 10) {
+        learnedPairParams[sym] = PAIR_PARAMS_DEFAULT[sym] || { minScore: base };
+        continue;
+      }
+      const wr = symTrades.filter(t => t.pnl > 0).length / symTrades.length;
+      // wr=0.50 → adj=0; wr=0.30 → +4; wr=0.70 → -4
+      const adj = Math.round((0.5 - wr) * 20);
+      const newMin = Math.max(base - 6, Math.min(base + 6, base + adj));
+      learnedPairParams[sym] = Object.assign({}, PAIR_PARAMS_DEFAULT[sym] || {}, { minScore: newMin });
+    }
+    state.pairParams = learnedPairParams;
     state.adaptiveMinScore = computeAdaptiveMinScore(trades, cfg.minScore);
 
-    // Pobierz realne saldo z Revolut X
     if (cfg.mode === 'live' && cfg.revxApiKey && cfg.revxPrivKey) {
       try {
         state.liveBalance = await revxGetBalance(cfg);
@@ -616,9 +566,9 @@ async function runBotCycle(env) {
   }
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // ANALIZA TECHNICZNA — MULTI-TF
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 function calcVWAP(highs, lows, closes, volumes) {
   const n = Math.min(50, highs.length);
   let tpVol = 0, vol = 0;
@@ -630,17 +580,6 @@ function calcVWAP(highs, lows, closes, volumes) {
   return vol > 0 ? tpVol / vol : closes.at(-1);
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// SMART MONEY CONCEPTS (SMC) — day trading
-// Mechaniczna, kodowalna interpretacja koncepcji SMC. To NIE jest gwarancja
-// takiej skutecznosci jak u doswiadczonego tradera SMC - to precyzyjne,
-// powtarzalne reguly inspirowane tymi koncepcjami, nie ich pelne odwzorowanie
-// (prawdziwa analiza SMC czesto zaklada uznaniowa interpretacje kontekstu).
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-// Order Block: ostatnia swieca przeciwna do kierunku przed silnym ruchem
-// impulsywnym. Bullish OB = ostatnia swieca spadkowa przed mocnym ruchem w
-// gore; dziala jako strefa popytu (wsparcia) przy powrocie ceny.
 function detectOrderBlocks(o, h, l, c, atrVal) {
   const blocks = [];
   const n = c.length;
@@ -657,28 +596,23 @@ function detectOrderBlocks(o, h, l, c, atrVal) {
       blocks.push({ type:'bearish', top:h[i], bottom:l[i], idx:i });
     }
   }
-  return blocks.slice(-6); // ostatnie 6 - najbardziej aktualne strefy
+  return blocks.slice(-6);
 }
 
-// Fair Value Gap (imbalance): luka miedzy swieca 1 a swieca 3 (pomijajac 2),
-// ktorej rynek "nie zdazyl wycenic" - obszar czesto ponownie odwiedzany.
 function detectFVG(h, l, c) {
   const gaps = [];
   const n = c.length;
   for (let i = 2; i < n; i++) {
-    if (h[i-2] < l[i]) { // bullish FVG - luka w gore
+    if (h[i-2] < l[i]) {
       gaps.push({ type:'bullish', top:l[i], bottom:h[i-2], idx:i });
     }
-    if (l[i-2] > h[i]) { // bearish FVG - luka w dol
+    if (l[i-2] > h[i]) {
       gaps.push({ type:'bearish', top:l[i-2], bottom:h[i], idx:i });
     }
   }
   return gaps.slice(-6);
 }
 
-// Liquidity sweep (stop hunt): cena robi knot ponizej niedawnego dolka
-// (zbiera zlecenia stop-loss/liquidity), po czym szybko wraca powyzej -
-// klasyczny bycz sygnal odwrocenia SMC. Analogicznie dla gornego knota.
 function detectLiquiditySweep(h, l, c, lookback=20) {
   const n = c.length;
   if (n < lookback + 3) return null;
@@ -694,8 +628,6 @@ function detectLiquiditySweep(h, l, c, lookback=20) {
   return null;
 }
 
-// Break of Structure (BOS, kontynuacja trendu) / Change of Character (CHoCH,
-// mozliwe odwrocenie) - na podstawie ostatnich pivotow swing high/low.
 function detectStructure(h, l, c, lookback=30) {
   const n = c.length;
   if (n < lookback) return { trend:'range', event:null };
@@ -719,9 +651,6 @@ function detectStructure(h, l, c, lookback=30) {
   return { trend, event };
 }
 
-// Premium/Discount: pozycja ceny w niedawnym zakresie wahan (50% = punkt
-// rownowagi). Ponizej 50% = strefa "discount" (atrakcyjna dla longow),
-// powyzej = "premium" (atrakcyjna dla shortow/realizacji zyskow).
 function premiumDiscountZone(h, l, c, lookback=30) {
   const n = c.length;
   const hh = Math.max(...h.slice(-lookback));
@@ -773,11 +702,6 @@ function calcStats(trades) {
 }
 
 async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adaptiveMinScore) {
-  // DAY TRADING: interwaly intraday zamiast swingowych D/4H/1H.
-  // kd -> 1H (struktura/bias, dawniej Daily), k4h -> 15min (trend, dawniej 4H),
-  // k1h -> 5min (precyzyjne wejscie, dawniej 1H). Zmienne nazwy zostaly bez zmian
-  // celowo - caly scoring nizej (RSI/MACD/BB na kazdym TF) dziala identycznie,
-  // tylko dostaje dane z krotszych, wlasciwych dla intraday okien czasowych.
   const kd      = await getKlines(sym, '60',  200);
   await sleep(400);
   const k4h     = await getKlines(sym, '15',  100);
@@ -786,8 +710,6 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   await sleep(400);
   const obiData = await getOrderbook(sym);
 
-  // Gate.io format: [timestamp_ms, open, high, low, close, volume] po mapowaniu w getKlines
-  // getKlines zwraca: [ts, o, h, l, c, v]
   const pk = k => ({
     c: k.map(x => +x[4]),
     h: k.map(x => +x[2]),
@@ -798,46 +720,38 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const d = pk(kd), h4 = pk(k4h), h1 = pk(k1h);
   const price = d.c.at(-1);
 
-  // Wskaźniki 1H
   const rsiD   = rsi(d.c, 14);
   const macdD  = macdFull(d.c);
   const bbD    = bband(d.c, 20);
   const ema20  = emaLast(d.c, 20);
-  const ema50 = emaLast(d.c, 50);
+  const ema50  = emaLast(d.c, 50);
   const atrD   = atr(d.h, d.l, d.c, 14);
   const vwap4h = calcVWAP(h4.h, h4.l, h4.c, h4.v);
   const srLevels = calcSRLevels(d.h, d.l, price);
   const regime = detectRegime(d.c, atrD, ema20, ema50);
 
-  // Wskaźniki 4H
   const rsi4h  = rsi(h4.c, 14);
   const macd4h = macdFull(h4.c);
 
-  // Wskaźniki 1H
   const rsi1h  = rsi(h1.c, 14);
   const macd1h = macdFull(h1.c);
   const confirm1h = macd1h.hist > 0 && rsi1h < 55;
 
-  // RSI Divergence
   const rsiArrD  = rsiArray(d.c.slice(-40),  14);
   const rsiArr4h = rsiArray(h4.c.slice(-30), 14);
   const divD  = rsiDivergence(d.c.slice(-40),  rsiArrD,  38);
   const div4h = rsiDivergence(h4.c.slice(-30), rsiArr4h, 28);
 
-  // Trend
   const trendD = price > ema50 ? (price > ema20 ? 2 : 1) : (price > ema20 ? 0 : -1);
 
-  // Volume
   const _vSum20 = d.v.length >= 20 ? d.v.slice(-20).reduce((a,b)=>a+b,0) : 0;
   const volR  = (_vSum20 > 0) ? d.v.at(-1) / (_vSum20/20) : 1;
   const _v4Sum20 = h4.v.length >= 20 ? h4.v.slice(-20).reduce((a,b)=>a+b,0) : 0;
   const vol4R = (_v4Sum20 > 0) ? h4.v.at(-1) / (_v4Sum20/20) : 1;
 
-  // Momentum
   const mom5  = d.c.length > 5  ? (price / d.c.at(-6)  - 1) * 100 : 0;
   const mom10 = d.c.length > 10 ? (price / d.c.at(-11) - 1) * 100 : 0;
 
-  // Scoring
   let score = 0;
   const why = [];
 
@@ -871,15 +785,11 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   else if (mom5 < -5 && mom10 < -10) { score += 5; why.push('Oversold momentum'); }
   else if (mom5 > 8)                  { score -= 5; why.push('Zbyt szybki wzrost'); }
 
-  // â”€â”€ SMART MONEY CONCEPTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // Struktura rynku liczona na 1H (d, wyzszy TF = bias/kontekst), order blocks/
-  // FVG/liquidity sweep na 5min (h1, najnizszy TF = precyzja wejscia). To zgodne
-  // z typowym podejsciem SMC: wyzszy TF daje kierunek, nizszy TF daje moment wejscia.
   const structure   = detectStructure(d.h, d.l, d.c);
   const orderBlocks = detectOrderBlocks(h1.o, h1.h, h1.l, h1.c, atr(h1.h, h1.l, h1.c, 14));
   const fvgs        = detectFVG(h1.h, h1.l, h1.c);
   const liqSweep    = detectLiquiditySweep(h1.h, h1.l, h1.c);
-  const premDisc     = premiumDiscountZone(d.h, d.l, d.c);
+  const premDisc    = premiumDiscountZone(d.h, d.l, d.c);
 
   if (structure.event === 'BOS_up')        { score += 15; why.push('SMC: Break of Structure (bull)'); }
   else if (structure.event === 'CHoCH_up') { score += 12; why.push('SMC: Change of Character (bull odwrocenie)'); }
@@ -913,14 +823,8 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   if (divD.bear)  { score -= 12; why.push('RSI dywergen. niedzwiedzia 1H'); }
   if (div4h.bear) { score -= 7;  why.push('RSI dywergen. niedzwiedzia 4H'); }
 
-  // bearBias byl wczesniej tylko odpisem punktowym (-30) - latwym do przebicia
-  // innymi bonusami (SMC/dywergencje), co puszczalo longi w wyraznej bessie.
-  // Teraz to twarda blokada wejscia (buy = false nizej), nie tylko punkty.
   const bearBias = trendD === -1 && rsiD > 50;
   if (bearBias) { score -= 30; why.push('BESSA: long zablokowany (twardy filtr)'); }
-  // bullBias - symetryczny twardy blok dla SHORT w silnym trendzie wzrostowym
-  // z RSI<50 (analogicznie do bearBias blokujacego LONG w bessie). Bez tego
-  // short mogl odpalac sie nawet w hossie - asymetria wzgledem longa.
   const bullBias = trendD === 2 && rsiD < 50;
   score = Math.max(0, Math.min(100, Math.round(score)));
 
@@ -935,17 +839,12 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   score = Math.max(0, Math.min(100, score));
 
   let regimeMinScoreAdj = 0;
-  // Sideways: +8 bylo za slabym filtrem wobec sumy mozliwych bonusow (np.
-  // +20 dywergencja + +15 BOS + +12 trend latwo przebijaly prog nawet w chopie).
-  // +18 realnie odcina wiekszosc sygnalow w bocznym rynku, gdzie SMC/dywergencje
-  // najczesciej daja falszywe sygnaly.
   if (regime === 'sideways')   { regimeMinScoreAdj = 18; }
   if (regime === 'bull_trend') { score += 5; why.push('Rezim: bull trend'); }
   if (regime === 'bear_trend') { score -= 15; why.push('Rezim: bear trend'); }
   if (regime === 'volatile')   { score -= 8;  why.push('Rezim: volatile'); }
   score = Math.max(0, Math.min(100, score));
 
-  // Candlestick Patterns
   const patResult = PATTERNS.detect(d.c, d.o, d.h, d.l);
   if (patResult.bullish > 0) {
     const volOk = volR >= 1.3;
@@ -959,22 +858,25 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   }
   score = Math.max(0, Math.min(100, Math.round(score)));
 
-  // OBI
   const obiScore = calcOBI(obiData);
   if (obiScore > 0) { score = Math.min(100, score + obiScore); why.push('OBI bycze'); }
   if (obiScore < 0) { score = Math.max(0,   score + obiScore); why.push('OBI niedzwiedzie'); }
 
-  // ML Predictions
-  const nbFeatures  = nb.discretize({ rsiD, macdHist: macdD.hist, bbPos: bbD.pos, trendD, mom5, confirm1h });
+  // BUG FIX #2: macdHist w jednostkach absolutnych (USD) dziala na BTC/ETH,
+  // ale na XRP (~0.5) i PEPE (~0.000005) jest 100-10000x mniejszy i zawsze
+  // wpada do binu neutralnego (1) w NB. Normalizujemy przez ATR (bezwymiarowe).
+  // Prog 0.15 = "silny sygnal", prog -0.15 = "silny niedzwiedzi".
+  const macdHistNorm = atrD > 0 ? macdD.hist / atrD : 0;
+  const nbFeatures  = nb.discretize({ rsiD, macdHist: macdHistNorm, bbPos: bbD.pos, trendD, mom5, confirm1h });
   const bodyRatio  = Math.abs(d.c.at(-1) - d.o.at(-1)) / (d.h.at(-1) - d.l.at(-1) + 0.001);
   const atrPctFeat = Math.min(1, atrD / price / 0.1);
   const emaSlopeD  = Math.max(-1, Math.min(1, (ema20/ema50 - 1) * 10));
   const gbmFeatures = [rsiD/100, macdD.hist>0?1:0, bbD.pos, (trendD+1)/3, mom5/20, mom10/20, confirm1h?1:0, volR/3, obiData.ratio||0.5, bodyRatio, atrPctFeat, emaSlopeD];
 
-  const nbPred  = nb.predict({ rsiD, macdHist: macdD.hist, bbPos: bbD.pos, trendD, mom5, confirm1h });
+  const nbPred  = nb.predict({ rsiD, macdHist: macdHistNorm, bbPos: bbD.pos, trendD, mom5, confirm1h });
   const gbmProb = gbm.predict(gbmFeatures);
 
-  const qlSig   = { rsiD, macdHist: macdD.hist, trendD, bbPos: bbD.pos, obiRatio: obiData.ratio || 0.5 };
+  const qlSig   = { rsiD, macdHist: macdHistNorm, trendD, bbPos: bbD.pos, obiRatio: obiData.ratio || 0.5 };
   const qlSugg  = ql.suggests(qlSig);
   let qlBonus = 0;
   if (qlSugg) {
@@ -983,7 +885,6 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     score = Math.max(0, Math.min(100, score + qlBonus));
   }
 
-  // Ensemble
   let finalProb = score / 100;
   let aiMethod  = 'Score';
   const obiNorm = ((obiData.ratio || 0.5) - 0.3) / 0.4;
@@ -1005,10 +906,6 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const pp       = pairParams[sym] || PAIR_PARAMS_DEFAULT[sym] || null;
   const minScore = (pp ? pp.minScore : adaptiveMinScore) + regimeMinScoreAdj;
 
-  // Confluence gate: czysta suma punktowa (score) potrafi przekroczyc prog na
-  // szumie kilku niezaleznych bonusow. Wymagamy zgodnosci min. 2 z 4 niezaleznych
-  // rodzin sygnalow (trend, momentum/RSI, struktura SMC, wolumen) - odcina to
-  // wejscia, gdzie sam wysoki score nie jest potwierdzony realna struktura rynku.
   const confluence = [
     trendD >= 1,
     (rsiD <= 40 || bbD.pos < 0.20 || divD.bull || div4h.bull),
@@ -1020,22 +917,15 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   }
 
   const buy = finalProb >= minScore / 100 && confluence >= 2 && !bearBias;
-  // Sygnal SHORT - wylacznie informacyjny (Revolut X nie obsluguje marginu/shortow,
-  // wiec bot NIGDY nie wykonuje realnej krotkiej sprzedazy). Wymaga symetrycznie
-  // niskiego finalProb ORAZ potwierdzenia niedzwiedziej struktury SMC - samo niskie
-  // prawdopodobienstwo bez potwierdzenia struktury to za slaby sygnal do pokazania.
-  //
-  // Lustrzany confluence gate (ten sam prog co dla longa, NIE ostrzejszy - shorty
-  // sa tylko informacyjne, wiec nie ma powodu zawyzac bariery ponad to co juz
-  // dziala dla longow; wyzszy prog tylko zdusilby liczbe okazji pokazywanych w
-  // ciagu dnia bez realnej korzysci, skoro i tak nic sie nie wykonuje).
+
+  const shortThreshold = (100 - minScore) / 100;
   const bearConfluence = [
     trendD <= -1,
     (rsiD >= 60 || bbD.pos > 0.80 || divD.bear || div4h.bear),
     (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || nearBearOB || (liqSweep && liqSweep.type === 'bearish')),
     (volR > 1.3 || vol4R > 1.3)
   ].filter(Boolean).length;
-  const shortSignal = finalProb <= (1 - minScore/100) && bearConfluence >= 2 && !bullBias;
+  const shortSignal = finalProb <= shortThreshold && bearConfluence >= 2 && !bullBias;
   const shortLevels = shortSignal ? {
     tp: price * (1 - Math.max(cfg.tp, atrD/price*2.5)),
     sl: price * (1 + Math.max(cfg.sl, atrD/price*1.5)),
@@ -1055,7 +945,6 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     why, nbFeatures, gbmFeatures, qlSig,
     volR: +volR.toFixed(2), vol4R: +vol4R.toFixed(2),
     mom5: +mom5.toFixed(2), mom10: +mom10.toFixed(2),
-    // Dane SMC + strefy TP/SL do wizualizacji na wykresie (dashboard)
     smc: {
       structure: structure.trend, event: structure.event,
       orderBlocks: orderBlocks.slice(-3), fvgs: fvgs.slice(-3),
@@ -1065,14 +954,22 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   };
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // ZARZĄDZANIE POZYCJAMI
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 async function checkPositions(cfg, state, env, ql) {
   const updated = [];
   for (const pos of (state.positions || [])) {
-    // FIX 6: jeśli pozycja jest już w trakcie zamykania — nie wysyłaj kolejnego SELL
     if (pos.closing) { updated.push(pos); continue; }
+
+    // BUG FIX #4: partialSelling moze zawisnac na true jesli Worker zostanie
+    // ubity w trakcie await revxMarketSell (dlugi sleep 1500*3 + timeout 10s).
+    // Auto-reset po 90s zamiast blokady na zawsze.
+    if (pos.partialSelling && Date.now() - (pos.partialSellingAt || 0) > 90 * 1000) {
+      addLog(state, 'Reset zawieszonej flagi partialSelling na ' + pos.sym, 'warn');
+      pos.partialSelling = false;
+    }
+
     try {
       const price = await getLastPrice(pos.sym);
       pos.cp = price;
@@ -1080,11 +977,6 @@ async function checkPositions(cfg, state, env, ql) {
 
       const pnlPct = (price - pos.entry) / pos.entry * 100;
       const ageMs  = Date.now() - pos.entryTs;
-      // FIX: w ostatnim kwartale okna 8h pozycja i tak zostanie zamknieta
-      // TIMEOUT-em - zamiast czekac na to bez zabezpieczenia, zaciskamy trailing
-      // o polowe (jesli pozycja jest na plusie), zeby wczesniej zablokowac czesc
-      // zysku, ktory wczesniej regularnie bywal oddawany w ostatniej godzinie
-      // przed wymuszonym zamknieciem.
       const nearTimeout   = ageMs > TIMEOUT_MS * 0.75;
       const effTrailDist  = (nearTimeout && pnlPct > 0) ? pos.trailDist * 0.5 : pos.trailDist;
       const trail  = pos.highP * (1 - effTrailDist);
@@ -1095,24 +987,22 @@ async function checkPositions(cfg, state, env, ql) {
       else if (price <= (pos.partialClosed ? pos.sl : (pos.sl > 0 ? pos.sl : pos.entry * (1 - cfg.sl)))) reason = 'STOP LOSS';
       else if (price <= trail && pnlPct > 1.5)               reason = 'TRAILING STOP';
 
-      // Partial TP (50% pozycji przy połowie TP)
       const _tpPct = pos.tp > 0 ? (pos.tp - pos.entry) / pos.entry * 100 : cfg.tp * 100;
-      if (!reason && pnlPct >= _tpPct * 0.5 && !pos.partialClosed && !pos.partialSelling) {
+      if (!reason && pnlPct >= _tpPct * 0.65 && !pos.partialClosed && !pos.partialSelling) {
+        pos.partialSellingAt = Date.now();
         pos.partialSelling = true;
         const halfQtyReq = pos.qty / 2;
-        // Uzywamy REALNEGO wyniku zlecenia (fillPrice/fillQty) z Revolut X gdy
-        // handel jest live - zlecenie moze wypelnic sie na innej cenie/ilosci niz
-        // zamowione (poprzednio kod ignorowal wynik revxMarketSell i liczyl
-        // qty/PnL na zyczeniowym halfQty i cenie mark, co rozjezdzalo sledzona
-        // pozycje z rzeczywistoscia na koncie).
         let fillPrice = price, fillQty = halfQtyReq;
         try {
           if (cfg.mode === 'live' && cfg.revxApiKey && cfg.revxPrivKey) {
             const res = await revxMarketSell(pos.sym, halfQtyReq, cfg);
             fillPrice = res.price;
             fillQty   = res.qty;
+          } else {
+            fillPrice = price * (1 - SLIPPAGE_PAPER);
           }
-          const realizedPnl = (fillPrice - pos.entry) * fillQty;
+          const partialFeeCost = (pos.entry * fillQty) * FEE + (fillPrice * fillQty) * FEE;
+          const realizedPnl = (fillPrice - pos.entry) * fillQty - partialFeeCost;
           const closedSize  = pos.size * (fillQty / pos.qty);
           pos.qty  = pos.qty - fillQty;
           pos.size = pos.size - closedSize;
@@ -1130,14 +1020,12 @@ async function checkPositions(cfg, state, env, ql) {
       }
 
       if (reason) {
-        // FIX 6: ustaw flagę closing przed wywołaniem closePosition
         pos.closing = true;
         const closed = await closePosition(pos, price, reason, cfg, state, ql);
         if (closed === false) {
-          pos.closing = false; // reset przy błędzie
+          pos.closing = false;
           updated.push(pos);
         }
-        // sukces — nie wracaj pozycji do listy
       } else {
         updated.push(pos);
       }
@@ -1164,7 +1052,7 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   const pumpReason = isPumpDump(sig);
   if (pumpReason) { addLog(state, 'Pump/dump guard (' + pumpReason + '): ' + sig.sym + ' — pomijam', 'warn'); return; }
   if (isVolumeAnomaly(sig, effMinScore)) { addLog(state, 'Vol anomaly: ' + sig.sym + ' vol=' + sig.volR.toFixed(2) + 'x — pomijam', 'warn'); return; }
-  if (isDeadHour()) { addLog(state, 'Dead hour (01-05 UTC): ' + sig.sym + ' — pomijam', 'warn'); return; }
+  if (isDeadHour()) { addLog(state, 'Dead hour (02-05 UTC): ' + sig.sym + ' — pomijam', 'warn'); return; }
 
   if (btcDrop && sig.sym !== 'XBTUSDT') {
     addLog(state, 'BTC Guard: pomijam ' + sig.sym, 'warn'); return;
@@ -1172,7 +1060,6 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
 
   if (corrBlocked(sig.sym, state)) return;
 
-  // Fear & Greed penalty
   let adjSig = sig;
   if (fg.val < cfg.fgMin) {
     const newProb = Math.max(0, sig.finalProb - 0.10);
@@ -1198,8 +1085,8 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
       return s + (p.size||0) * slPct;
     }, 0);
     const portfolioHeat = totalRisk / (total > 0 ? total : 1);
-    if (portfolioHeat > 0.10) {
-      addLog(state, 'Portfolio heat >10% — blokada (' + (portfolioHeat*100).toFixed(1) + '%)', 'warn');
+    if (portfolioHeat > 0.08) {
+      addLog(state, 'Portfolio heat >8% — blokada (' + (portfolioHeat*100).toFixed(1) + '%)', 'warn');
       return;
     }
   }
@@ -1207,15 +1094,18 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
   const pp     = pp0;
   const levels = calcDynamicLevels(adjSig.price, adjSig.atrD, cfg, pp, adjSig.spreadPct);
   const slPct  = (adjSig.price - levels.sl) / adjSig.price;
+
+  const totalRoundTripCost = FEE * 2 + SLIPPAGE_PAPER * 2;
+  const tpOffsetActual = (levels.tp - adjSig.price) / adjSig.price;
+  if (tpOffsetActual < totalRoundTripCost * MIN_COST_COVERAGE_RATIO) {
+    addLog(state, 'Trade ' + sig.sym + ' odrzucony: TP=' + (tpOffsetActual*100).toFixed(2) +
+      '% < ' + (totalRoundTripCost * MIN_COST_COVERAGE_RATIO * 100).toFixed(2) +
+      '% (koszt rundy x' + MIN_COST_COVERAGE_RATIO + ')', 'warn');
+    return;
+  }
+
   let posSize = kellySize(cfg, state, total, slPct);
 
-  // Defensywny throttle wg realnej wydajnosci (Sharpe/maxDD) - do tej pory
-  // calcStats liczyl te metryki wylacznie do wyswietlenia na dashboardzie,
-  // bez zadnego wplywu na decyzje bota. Gdy ostatnia seria trejdow ma
-  // ujemny Sharpe albo glebszy drawdown, ciecie rozmiaru o polowe (NIE
-  // pelna blokada - od tego sa juz osobne circuit breakery: consLoss,
-  // dailyPnl, drawdown -15%) daje botowi szanse "oddychac" mniejszym
-  // ryzykiem, zamiast handlowac pelnym rozmiarem w slabej serii.
   const st = state.stats;
   if (st && (state.trades || []).length >= 15 && (st.sharpe < 0 || st.maxDD > 20)) {
     posSize = Math.max(5, Math.round(posSize * 0.5 * 100) / 100);
@@ -1255,8 +1145,10 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
       return;
     }
   } else {
-    const qty = posSize / adjSig.price;
-    state.positions.push(buildPosition(adjSig, adjSig.price, qty, levels, posSize, ql));
+    const paperExecPrice = adjSig.price * (1 + SLIPPAGE_PAPER);
+    const qty = posSize / paperExecPrice;
+    const paperLevels = calcDynamicLevels(paperExecPrice, adjSig.atrD, cfg, pp, adjSig.spreadPct);
+    state.positions.push(buildPosition(adjSig, paperExecPrice, qty, paperLevels, posSize, ql));
     if (cfg.mode === 'paper') {
       state.paperBalance = Math.max(0, (state.paperBalance || paperBal) - posSize);
     }
@@ -1292,10 +1184,6 @@ function buildPosition(sig, price, qty, levels, size, ql) {
 }
 
 async function closePosition(pos, price, reason, cfg, state, ql) {
-  // execPrice = realna cena wykonania SELL na gieldzie (live) - moze sie
-  // roznic od `price` (ostatni obserwowany kurs, ktory wywolal decyzje o
-  // zamknieciu) o realny slippage/spread. W paper trybie execPrice=price
-  // (brak realnej egzekucji, wiec brak slippage do zmierzenia).
   let execPrice = price;
   if (cfg.mode === 'live' && cfg.revxApiKey && cfg.revxPrivKey) {
     try {
@@ -1305,6 +1193,8 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
       addLog(state, 'SELL FAILED ' + pos.sym + ': ' + e.message, 'err');
       return false;
     }
+  } else {
+    execPrice = price * (1 - SLIPPAGE_PAPER);
   }
 
   const grossPnl = (execPrice - pos.entry) * pos.qty;
@@ -1312,9 +1202,13 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
   const pnl      = grossPnl - feeCost;
   const pnlPct   = pnl / pos.size * 100;
   const durH     = ((Date.now() - pos.entryTs) / 3600000).toFixed(1);
-  // Slippage: roznica miedzy cena, ktora wywolala decyzje (`price`) a realna
-  // cena wykonania (`execPrice`) - w % ceny sygnalu. W paper zawsze 0.
-  const slippagePct = price > 0 ? +(((execPrice - price) / price) * 100).toFixed(3) : 0;
+
+  // BUG FIX #5: to mierzy exec - signalPrice (Revolut X fill vs Bybit mid), co
+  // zawiera basis miedzygiełdowy + prawdziwy slippage. Prawdziwy slippage
+  // wymagalby mid z Revolut X w momencie decyzji (endpoint niedostepny publicznie).
+  const execVsSignalPricePct = price > 0
+    ? +(((execPrice - price) / price) * 100).toFixed(3)
+    : 0;
 
   if (cfg.mode === 'paper') {
     state.paperBalance = (state.paperBalance || 0) + pos.size + pnl;
@@ -1324,12 +1218,9 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
   if (pnl < 0) {
     state.consLoss = (state.consLoss || 0) + 1;
     if (!state.cooldown || typeof state.cooldown !== 'object') state.cooldown = {};
-    // Day trading: 60 min (bylo 45) - wciaz w ramach jednej sesji, ale dluzej
-    // niz jeden cykl "zle wejscie -> szybki re-entry w te same warunki" (skan
-    // co 3 min), co ograniczalo overtrading po stracie na tej samej parze.
     state.cooldown[pos.sym] = Date.now() + 60 * 60000;
     if (state.consLoss >= 3) {
-      state.globalBlockUntil = Date.now() + 90 * 60000; // bylo: 4 straty -> 1h
+      state.globalBlockUntil = Date.now() + 90 * 60000;
       addLog(state, '3 straty z rzedu — blokada 90 min', 'err');
     }
   } else {
@@ -1343,7 +1234,8 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
 
   const trade = {
     sym: pos.sym, entry: pos.entry, exit: execPrice, qty: pos.qty,
-    pnl: +pnl.toFixed(4), pnlPct: +pnlPct.toFixed(2), slippagePct,
+    pnl: +pnl.toFixed(4), pnlPct: +pnlPct.toFixed(2),
+    execVsSignalPricePct,
     durH, reason, score: pos.score, finalProb: pos.finalProb,
     aiMethod: pos.aiMethod, nbFeatures: pos.nbFeatures, gbmFeatures: pos.gbmFeatures,
     nbLabel: pos.nbLabel || 'NEUTRAL', gbmProb: pos.gbmProb, ts: Date.now()
@@ -1356,7 +1248,8 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
   addLog(state,
     _closeIcon + ' ' + pos.sym + ' ' + reason +
     ' P/L: ' + (pnl>=0?'+':'') + '$' + pnl.toFixed(2) +
-    ' (' + pnlPct.toFixed(2) + '%) | ' + durH + 'h | R:R=' + (pos.rr||'?'),
+    ' (' + pnlPct.toFixed(2) + '%) | ' + durH + 'h | R:R=' + (pos.rr||'?') +
+    ' | exec-signal=' + execVsSignalPricePct.toFixed(3) + '%',
     pnl >= 0 ? 'ok' : 'err');
 
   const _reasonPL = reason === 'TAKE PROFIT' ? 'REALIZACJA ZYSKU' :
@@ -1371,20 +1264,9 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
     'Tryb: ' + (cfg.mode === 'live' ? 'LIVE (Revolut X)' : 'PAPER'));
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // GUARDS
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// FIX: poprzednie stale progi (vol4R>4.0x, mom5>8%/5h, mom10>12%/10h) byly
-// kalibrowane "na czuja" pod BTC/ETH/SOL/XRP. Dla spokojnej pary (np. BTC w
-// nudnym okresie) byly za luzne - realnie ekstremalny ruch 6-7%/5h przechodzil
-// bez ostrzezenia. Dla kazdej pary o wyzszej naturalnej zmiennosci (np. przyszly
-// memecoin typu PEPE) bylyby odwrotnie - albo martwym filtrem blokujacym co
-// drugi sygnal, albo wciaz przepuszczaly ruchy ekstremalne jak na TEN konkretny
-// instrument. Rozwiazanie: prog wzgledny do ATR danej pary w danym momencie
-// (pierwiastek czasu jako przyblizenie skalowania zmiennosci w czasie) - ten sam
-// mechanizm dziala automatycznie dla kazdego instrumentu/rezimu zmiennosci bez
-// recznego przeliczania progow per-symbol. Mnozniki (3.5x) to punkt startowy do
-// kalibracji na realnych danych/backteście, nie ostateczna wartosc.
+// ═══════════════════════════════════════════════════════════════════════════
 function isPumpDump(sig) {
   const atrPct = (sig.atrD && sig.price) ? (sig.atrD / sig.price) * 100 : 0.5;
   const vol4Thresh  = 4.0;
@@ -1396,10 +1278,6 @@ function isPumpDump(sig) {
   return null;
 }
 
-// FIX: prog "62" byl na trwale wpisany na sztywno, mimo ze realny effMinScore per
-// para roznil sie od 62 do 66 (PAIR_PARAMS_DEFAULT) - filtr byl przez to nieco
-// niezgodny z faktycznym progiem wejscia danej pary. Przyjmuje teraz effMinScore
-// jako parametr (liczony raz w openTrade i przekazywany dalej).
 function isVolumeAnomaly(sig, effMinScore) {
   if (sig.volR < 0.35) return true;
   if (sig.score >= (effMinScore || 62) && sig.vol4R < 0.3) return true;
@@ -1408,7 +1286,7 @@ function isVolumeAnomaly(sig, effMinScore) {
 
 function isDeadHour() {
   const h = new Date().getUTCHours();
-  return h >= 1 && h < 5;
+  return h >= 2 && h < 5;
 }
 
 async function btcDropGuard() {
@@ -1418,7 +1296,7 @@ async function btcDropGuard() {
     const t = (d.result && d.result.list && d.result.list[0]) || null;
     if (!t) return false;
     const pct = +(t.price24hPcnt || 0) * 100;
-    return pct < -5;
+    return pct < -4;
   } catch(e) { return false; }
 }
 
@@ -1436,19 +1314,11 @@ function corrBlocked(sym, state) {
   return openInGroup >= 1;
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // RISK MANAGEMENT
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 function isMicroAccount(total) { return (isFinite(total) && total > 0 && total < 100); }
 
-// slPct = realny dystans stop-lossa TEJ konkretnej pozycji (po ATR-floor,
-// per-para override itd. - patrz calcDynamicLevels), NIE cfg.sl z panelu.
-// RISK PARITY: bez normalizacji ponizej, ten sam $ rozmiar pozycji dawal
-// rozny $ risk (size*slPct) w zaleznosci od tego, jak szeroki wyszedl SL na
-// danej parze/w danym momencie (ATR) - PEPE z szerszym SL ryzykowal
-// realnie wiecej dolarow niz BTC przy identycznym rozmiarze w $. Standard
-// instytucjonalny: wielkosc pozycji ma sie skalowac odwrotnie do dystansu
-// stopa, tak by ryzykowany $ byl porownywalny miedzy trejdami/parami.
 function kellySize(cfg, state, total, slPct) {
   const safeTotal = (isFinite(total) && total > 0) ? total : 100;
 
@@ -1457,7 +1327,7 @@ function kellySize(cfg, state, total, slPct) {
   }
 
   const fixedSize = cfg.posSize || 15;
-  const trades    = (state.trades || []).slice(0, 30); // FIX 7: slice(0,30) = najnowsze 30 tradĂłw
+  const trades    = (state.trades || []).slice(0, 30);
   let sz;
   if (trades.length < 5) {
     sz = Math.min(fixedSize, Math.max(10, safeTotal * (cfg.riskPct || 2) / 100));
@@ -1482,10 +1352,6 @@ function kellySize(cfg, state, total, slPct) {
   }
   sz = Math.min(fixedSize, sz, safeTotal * 0.20);
 
-  // Normalizacja do realnego SL% tej pozycji wzgledem baseline (cfg.sl) -
-  // clamp x0.5-x1.5, zeby nie doprowadzic do absurdalnie malych/duzych
-  // pozycji przy ekstremalnym ATR (to tylko korekta risk-parity, nie
-  // zamiennik istniejacych limitow: fixedSize, 20% equity, portfolio heat).
   if (isFinite(slPct) && slPct > 0) {
     const baselineSl  = cfg.sl || 0.01;
     const normFactor  = Math.min(1.5, Math.max(0.5, baselineSl / slPct));
@@ -1495,17 +1361,9 @@ function kellySize(cfg, state, total, slPct) {
   return sz;
 }
 
-// FIX: bufor na spread/poslizg market-orderow na Revolut X byl stala 0.15%
-// niezaleznie od pary i chwili - w spokojnych momentach dla BTC/ETH to zawyzalo
-// TP/SL bez potrzeby, a przy chwilowo niskiej plynnosci (np. XRP w slabych
-// godzinach) bywalo zbyt waskie wobec realnego spreadu, ktory "zjadal" TP
-// zanim market-order faktycznie sie zamknal. Liczymy teraz realny spread z
-// live orderbooka (ten sam odczyt co OBI, patrz getOrderbook) i uzywamy go
-// jako bufora, z podloga/sufitem jako zabezpieczeniem przed anomaliami danych
-// (np. chwilowa dziura w orderbooku dajaca absurdalny spread).
 const SPREAD_BUFFER_MIN     = 0.0008;
 const SPREAD_BUFFER_MAX     = 0.006;
-const SPREAD_BUFFER_DEFAULT = 0.0015; // uzywany gdy spreadPct niedostepny (fallback jak wczesniej)
+const SPREAD_BUFFER_DEFAULT = 0.0015;
 
 function effectiveSpreadBuffer(spreadPct) {
   if (spreadPct == null || !isFinite(spreadPct) || spreadPct <= 0) return SPREAD_BUFFER_DEFAULT;
@@ -1535,9 +1393,9 @@ function computeAdaptiveMinScore(trades, baseMin) {
   return baseMin;
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // FORMACJE ŚWIECOWE
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 const PATTERNS = {
   detect(closes, opens, highs, lows) {
     const n = closes.length;
@@ -1552,40 +1410,32 @@ const PATTERNS = {
     const isDown = j => c[j] < o[j];
     const atrVal = (range(i)+range(i-1)+range(i-2))/3 || 1;
 
-    // HAMMER
     const lowerSh = isUp(i) ? o[i]-l[i] : c[i]-l[i];
     const upperSh = isUp(i) ? h[i]-c[i] : h[i]-o[i];
     if (body(i) < atrVal*0.3 && lowerSh > body(i)*2 && upperSh < body(i)*0.5 && isDown(i-1)) {
       patterns.push({ name:'Hammer', type:'bullish', strength:75, desc:'Silne odrzucenie w dol' });
     }
-    // BULLISH ENGULFING
     if (isDown(i-1) && isUp(i) && o[i]<c[i-1] && c[i]>o[i-1] && body(i)>body(i-1)*1.1) {
       patterns.push({ name:'Bullish Engulfing', type:'bullish', strength:82, desc:'Popyt przytloczyl podaz' });
     }
-    // MORNING STAR
     if (n>=3 && isDown(i-2) && body(i-1)<atrVal*0.25 && isUp(i) && c[i]>(o[i-2]+c[i-2])/2) {
       patterns.push({ name:'Morning Star', type:'bullish', strength:85, desc:'Odwrocenie trendu spadkowego' });
     }
-    // DOJI
     if (body(i) < atrVal*0.1 && range(i) > atrVal*0.3) {
       const t = (isDown(i-1)||isDown(i-2)) ? 'bullish' : 'neutral';
       patterns.push({ name:'Doji', type:t, strength:55, desc:'Rynek niezdecydowany' });
     }
-    // PIERCING LINE
     if (isDown(i-1) && isUp(i) && o[i]<l[i-1] && c[i]>(o[i-1]+c[i-1])/2 && c[i]<o[i-1]) {
       patterns.push({ name:'Piercing Line', type:'bullish', strength:70, desc:'Kupujacy weszli po bessie' });
     }
-    // THREE WHITE SOLDIERS
     if (n>=3 && isUp(i) && isUp(i-1) && isUp(i-2) && c[i]>c[i-1] && c[i-1]>c[i-2] && body(i)>atrVal*0.4 && body(i-1)>atrVal*0.4) {
       patterns.push({ name:'Three White Soldiers', type:'bullish', strength:80, desc:'Silny trend wzrostowy' });
     }
-    // SHOOTING STAR
     const upperSh2 = isUp(i) ? h[i]-c[i] : h[i]-o[i];
     const lowerSh2 = isUp(i) ? o[i]-l[i] : c[i]-l[i];
     if (body(i)<atrVal*0.3 && upperSh2>body(i)*2 && lowerSh2<body(i)*0.5 && isUp(i-1)) {
       patterns.push({ name:'Shooting Star', type:'bearish', strength:72, desc:'Ostrzezenie przed korekta' });
     }
-    // BEARISH ENGULFING
     if (isUp(i-1) && isDown(i) && o[i]>c[i-1] && c[i]<o[i-1] && body(i)>body(i-1)*1.1) {
       patterns.push({ name:'Bearish Engulfing', type:'bearish', strength:78, desc:'Podaz przejela kontrole' });
     }
@@ -1597,15 +1447,9 @@ const PATTERNS = {
   }
 };
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // MODUŁY AI/ML
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// FIX: rebalancing liczyl wagi WYLACZNIE z trafnosci (accuracy) - to ignoruje
-// asymetrie wygranych/strat. Komponent moze miec 55% trafnosci, ale przegrywac
-// wiecej na tych 45% blednych sygnalow niz zarabia na 55% poprawnych (i vice
-// versa) - to dla realnego P&L jest tak samo wazne jak win-rate. Dodajemy
-// "expectancyFactor": przecietny wynik % transakcji, w ktorych dany komponent
-// mowil BUY, jako mnoznik korygujacy wage wynikajaca z samej trafnosci.
+// ═══════════════════════════════════════════════════════════════════════════
 function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
   if (!recentTrades || recentTrades.length < 10) return null;
   const newEw = { score: ew.score, nb: ew.nb, gbm: ew.gbm, obi: ew.obi, ql: ew.ql };
@@ -1633,12 +1477,6 @@ function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
   const gbmExp = expectancyFactor(t => typeof t.gbmProb === 'number' && t.gbmProb >= 0.5);
   newEw.gbm = +Math.max(0.3, Math.min(1.5, gbmAcc * 2 * gbmExp)).toFixed(2);
 
-  // Komponent "score" byl wczesniej na trwale zablokowany na wadze 1.0, mimo
-  // ze to suma ~15 recznie dobranych punktow bez zadnej walidacji skutecznosci
-  // (w przeciwienstwie do NB/GBM, ktore mialy tracked accuracy). Teraz liczymy
-  // jego wlasna trafnosc: score >= 60 traktujemy jako "component-BUY" i
-  // sprawdzamy zgodnosc z wynikiem transakcji, analogicznie do NB powyzej,
-  // razem z tym samym expectancyFactor.
   const SCORE_BUY_THRESHOLD = 60;
   let scoreCorrect = 0, scoreTotal = 0;
   recentTrades.forEach(t => {
@@ -1660,10 +1498,12 @@ function makeNB(saved) {
   const nb = {
     model: null, trained: false, trainCount: 0,
 
+    // BUG FIX #2: progi macdHist bezwymiarowe (macdHist znormalizowany przez ATR).
+    // 0.15 = 15% ATR (silny sygnal), -0.15 = silny niedzwiedzi.
     discretize(f) {
       return [
         f.rsiD<=30?0:f.rsiD<=45?1:f.rsiD<=60?2:3,
-        f.macdHist>0.001?2:f.macdHist>-0.001?1:0,
+        f.macdHist >  0.15 ? 2 : f.macdHist > -0.15 ? 1 : 0,
         f.bbPos<0.2?0:f.bbPos<0.5?1:f.bbPos<0.8?2:3,
         f.trendD+1,
         f.mom5<-5?0:f.mom5<0?1:f.mom5<5?2:3,
@@ -1755,11 +1595,6 @@ function makeGBM(saved) {
       const X=[], y=[];
       trades.forEach(t => { if (t.gbmFeatures&&t.gbmFeatures.length===12) { X.push(t.gbmFeatures); y.push(t.pnl>0?1:0); } });
       if (X.length < 20) return false;
-      // train = najstarsze 70% (chronologicznie pierwsze), OOS = najnowsze 30% (nieznane podczas treningu)
-      // trades posortowane najnowszy→najstarszy, więc X[0]=najnowszy → granica musi byc
-      // przy 30% (nie 70%!), zeby slice(si)=stare 70% trafilo do treningu, a
-      // slice(0,si)=nowe 30% do OOS. Wczesniej si=0.7*len dawalo odwrotnie: trening na
-      // najstarszych 30%, a "OOS" liczone na najnowszych 70% (odwrotnie niz w komentarzu).
       const si = Math.floor(X.length*0.3);
       const Xt=X.slice(si), yt=y.slice(si);
       const Xoos=X.slice(0,si), yoos=y.slice(0,si);
@@ -1843,9 +1678,9 @@ function makeQL(saved) {
   return ql;
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // WSKAŹNIKI TECHNICZNE
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 function emaArr(arr, p) {
   if (!arr||!arr.length) return [0];
   const k=2/(p+1);
@@ -1928,8 +1763,6 @@ function bband(c, p=20) {
   if (!c||!c.length) return {upper:0,mid:0,lower:0,pos:0.5};
   if (c.length<p) {const v=c.at(-1)||0;return{upper:v*1.02,mid:v,lower:v*0.98,pos:0.5};}
   const sl=c.slice(-p), m=sl.reduce((a,b)=>a+b,0)/p;
-  // Standardowa definicja Bollinger Bands uzywa odchylenia POPULACYJNEGO (dzielenie
-  // przez p), nie probkowego (p-1). Ta sama poprawka co w swingai-bot/MEXC.
   const std=Math.sqrt(sl.reduce((a,b)=>a+(b-m)**2,0)/p);
   const up=m+2*std, lo=m-2*std;
   const pos=up===lo?0.5:Math.max(0,Math.min(1,(c.at(-1)-lo)/(up-lo)));
@@ -1941,26 +1774,14 @@ function atr(h, l, c, p=14) {
   const trs=[];
   for (let i=1;i<h.length;i++) trs.push(Math.max(h[i]-l[i],Math.abs(h[i]-c[i-1]),Math.abs(l[i]-c[i-1])));
   if (trs.length<p) return trs.reduce((a,b)=>a+b,0)/(trs.length||1);
-  // Kanoniczne wygladzanie Wildera zamiast prostej sredniej kroczacej - ta sama
-  // poprawka co w swingai-bot/MEXC (wplywa na obliczane TP/SL/trailing).
   let a = trs.slice(0,p).reduce((x,y)=>x+y,0)/p;
   for (let i=p;i<trs.length;i++) a = (a*(p-1)+trs[i])/p;
   return a;
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// MARKET DATA — BYBIT V5 (public, no auth) — https://api.bybit.com
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// Revolut X /public/candles i /public/order-book okazaly sie mimo nazwy "public"
-// WYMAGAC autoryzacji (HTTP 401 "Unauthenticated access", zweryfikowane empirycznie
-// 2026-09-02) - dziala bez klucza jedynie /public/tickers. Zamiast blokowac cala
-// analize (RSI/MACD/ATR licza sie ze swiec) do czasu uzyskania klucza API Revolut X,
-// dane rynkowe ida z Bybit v5 (bez auth, sprawdzone ze dziala z Cloudflare Workers -
-// juz uzywane w tej rodzinie botow, patrz komentarze w swingai-bot/MEXC). Symbol
-// danych (Bybit BTCUSDT) != symbol egzekucji (Revolut X BTC/USDC) - to jest OK,
-// identyczny wzorzec co w bocie MEXC (dane Kraken XBTUSDT, egzekucja MEXC BTCUSDC):
-// USDT i USDC sa praktycznie 1:1, wiec ruch ceny (do czego slyzy analiza) jest
-// wiarygodny mimo innego zrodla niz miejsce faktycznego zlecenia.
+// ═══════════════════════════════════════════════════════════════════════════
+// MARKET DATA — BYBIT V5
+// ═══════════════════════════════════════════════════════════════════════════
 const BYBIT_BASE = 'https://api.bybit.com';
 function bybitSymbol(sym) { return sym.replace('XBT', 'BTC'); }
 
@@ -1972,9 +1793,6 @@ function fetchWithTimeout(url, ms, opts) {
   return fetch(url, options).finally(() => clearTimeout(tid));
 }
 
-// Bybit zwraca retCode!=0 (np. 10006/10018 = rate limit) w JSON z HTTP 200, nie
-// przez HTTP status - retry musi sprawdzac retCode, analogicznie do sprawdzania
-// d.error na Krakenie w bocie MEXC.
 async function fetchBybitWithRetry(url, tries) {
   tries = tries || 3;
   const delays = [500, 1500, 3000];
@@ -1999,7 +1817,6 @@ async function getKlines(sym, interval, limit) {
   );
   const list = (d.result && d.result.list) || [];
   if (!list.length) throw new Error('getKlines: pusta lista ' + sym);
-  // Bybit zwraca najnowsza swiece pierwsza - odwroc do konwencji najstarsza->najnowsza
   return list.slice().reverse().map(k => [+k[0], +k[1], +k[2], +k[3], +k[4], +k[5]]);
 }
 
@@ -2020,9 +1837,6 @@ async function getOrderbook(sym) {
     const bids = bidsArr.reduce((s, x) => s + +x[1], 0);
     const asks = asksArr.reduce((s, x) => s + +x[1], 0);
     const total = bids + asks;
-    // FIX: dodano spreadPct z top-of-book (Bybit v5: book.b[0]=najlepszy bid,
-    // book.a[0]=najlepszy ask) - uzywane teraz do dynamicznego bufora TP/SL
-    // (effectiveSpreadBuffer/calcDynamicLevels) zamiast stalej 0.15%.
     let spreadPct = null;
     if (bidsArr.length && asksArr.length) {
       const bestBid = +bidsArr[0][0], bestAsk = +asksArr[0][0];
@@ -2057,23 +1871,18 @@ async function getFearGreed(state) {
   } catch(e) { return cache; }
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // REVOLUT X TRADING — Ed25519 signing
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-
-// Mapuj XBTUSDT (Kraken) â†’ BTC/USDC (format Revolut X handel)
+// ═══════════════════════════════════════════════════════════════════════════
 function revxInstrument(sym) {
   return sym.replace('XBT','BTC').replace('USDT','/USDC');
 }
 
-// Wczytaj Ed25519 PKCS8 PEM klucz prywatny
 async function revxImportKey(privKeyB64OrPem) {
   let pem = privKeyB64OrPem;
-  // Jeśli to base64 bez nagłówka PEM — dodaj nagłówek
   if (!pem.includes('-----BEGIN')) {
     pem = '-----BEGIN PRIVATE KEY-----\n' + pem + '\n-----END PRIVATE KEY-----';
   }
-  // Usuń nagłówki i whitespace, zdekoduj base64 → ArrayBuffer
   const b64 = pem
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
@@ -2090,17 +1899,17 @@ async function revxImportKey(privKeyB64OrPem) {
   );
 }
 
-// Podpisz wiadomość Ed25519, zwróć base64
 async function revxSign(message, privKey) {
   const msgBuf = new TextEncoder().encode(message);
   const sigBuf = await crypto.subtle.sign({ name: 'Ed25519' }, privKey, msgBuf);
   return btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
 }
 
-// Wykonaj zapytanie do Revolut X API z odpowiednimi nagłówkami
+// BUG FIX #3: poprzedni komentarz sugerowal format z kropkami ("${ts}.${method}.${path}")
+// ale kod concatenuje bez separatorow - sprzeczne. Dokumentacja Revolut X wymaga
+// RAW concatenation BEZ separatorow. Z kropkami dostaje sie HTTP 401 "Invalid signature".
 async function revxRequest(method, path, body, cfg) {
   const timestamp = String(Date.now());
-  // Signature message: "${timestamp}.${METHOD}.${path}${body ? '.' + JSON.stringify(body) : ''}"
   const sigMsg = timestamp + method + path + (body ? JSON.stringify(body) : '');
 
   let privKey;
@@ -2132,11 +1941,6 @@ async function revxRequest(method, path, body, cfg) {
   return data;
 }
 
-// Pobierz saldo USDC z Revolut X
-// FIX: dodano retry (bylo: jedno zadanie, zero ponownych prob) - w przeciwienstwie
-// do wywolan Bybit, ktore od poczatku mialy fetchBybitWithRetry. Jednorazowy blad
-// sieci zostawial state.liveBalance nieaktualne na caly cykl (dailyStartBalance,
-// Kelly sizing, drawdown circuit breaker - wszystko liczone na starym saldzie).
 async function revxGetBalance(cfg) {
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -2150,7 +1954,6 @@ async function revxGetBalance(cfg) {
   throw lastErr;
 }
 
-// Market BUY — kupuje za quoteSize USDC
 async function revxMarketBuy(sym, quoteSize, cfg) {
   const instrument_code = revxInstrument(sym);
   const body = {
@@ -2162,13 +1965,6 @@ async function revxMarketBuy(sym, quoteSize, cfg) {
   const order = await revxRequest('POST', '/orders', body, cfg);
   if (!order.id) throw new Error('Revolut X buy: brak order.id — ' + JSON.stringify(order));
 
-  // FIX: probuj kilka razy pobrac potwierdzone szczegoly zlecenia (average_price +
-  // filled_base_size), zamiast po jednej nieudanej probie zgadywac filledQty jako
-  // quoteSize/1 - to bylo krytyczne: przy braku danych bot traktowal np. $15 jak
-  // 15 jednostek BTC (pozycja fikcyjnie kilkaset tysiecy razy za duza), co zatrulo
-  // by dailyPnl, portfolio heat, Kelly sizing i modele NB/GBM/QL uczone na tych
-  // tradach. Lepiej NIE zapisac pozycji i zglosic to glosno (Telegram + throw),
-  // niz zapisac ja z odgadnietymi, bezsensownymi danymi.
   let details = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     await sleep(1500);
@@ -2188,17 +1984,8 @@ async function revxMarketBuy(sym, quoteSize, cfg) {
   return { price: avgPrice, qty: filledQty, orderId: order.id };
 }
 
-// Market SELL — sprzedaje baseSize jednostek (np. BTC)
-// FIX: analogicznie do revxMarketBuy - potwierdz realny fill (average_price +
-// filled_base_size) zamiast zakladac sukces po samym zlozeniu zlecenia.
-// Bez tego SELL zlozony, ale nie wypelniony (blad/reject po stronie gieldy,
-// czesciowy fill), bylby traktowany jak zamknieta pozycja - bot zgubilby
-// sledzenie realnej otwartej ekspozycji i zaksiegowalby PnL wg cudzej,
-// niewykonanej ceny. Lepiej NIE zamykac pozycji w bocie i zglosic to glosno,
-// niz zamknac ja z odgadnietymi danymi.
 async function revxMarketSell(sym, baseQty, cfg) {
   const instrument_code = revxInstrument(sym);
-  // Revolut X wymaga precyzji — ogranicz do rozsądnej liczby miejsc po przecinku
   const baseSizeStr = baseQty.toFixed(8).replace(/\.?0+$/, '') || '0';
   const body = {
     instrument_code,
@@ -2228,9 +2015,9 @@ async function revxMarketSell(sym, baseQty, cfg) {
   return { price: avgPrice, qty: filledQty, orderId: order.id };
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // TELEGRAM
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 async function tgSend(cfg, msg) {
   if (!cfg.tgToken || !cfg.tgChat) return;
   try {
@@ -2242,9 +2029,9 @@ async function tgSend(cfg, msg) {
   } catch(e) {}
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// PIN GATE — HELPERY (sesje, hash, rate-limit, CORS z credentials)
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
+// PIN GATE — HELPERY
+// ═══════════════════════════════════════════════════════════════════════════
 async function sha256Hex(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -2283,9 +2070,6 @@ async function recordPinFail(env, key) {
 async function clearPinFail(env, key) {
   try { await env.SWINGAI_REVOLUT_KV.delete(key); } catch(e) {}
 }
-// Zezwalamy na credentialed cross-site fetch (cookie sesji) TYLKO z domen GitHub
-// Pages tego projektu - w przeciwienstwie do reszty API (corsHeaders(), '*', bez
-// credentials) ktore obsluguje dane publiczne bez sesji.
 function pinCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
   const allowed = origin.endsWith('.github.io') || origin === 'https://tomekfalek-cyber.github.io';
@@ -2300,9 +2084,9 @@ function pinJsonResp(data, status, request) {
   return new Response(JSON.stringify(data), { status: status || 200, headers: Object.assign({ 'Content-Type': 'application/json' }, pinCorsHeaders(request)) });
 }
 
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 // KV HELPERS
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+// ═══════════════════════════════════════════════════════════════════════════
 async function getConfig(env) {
   try { const c = await env.SWINGAI_REVOLUT_KV.get('config'); return c ? JSON.parse(c) : defaultConfig(); }
   catch(e) { return defaultConfig(); }
@@ -2315,9 +2099,6 @@ async function getState(env) {
 function defaultConfig() {
   return {
     active: false, mode: 'paper',
-    // Day trading: dużo ciaśniejsze poziomy niż w wersji swingowej (tam 12%/5%/6%) -
-    // pozycje trzymane w ciągu jednego dnia, nie tygodni, więc oczekiwany ruch ceny
-    // jest odpowiednio mniejszy. Wartości startowe, do kalibracji na realnych danych.
     tp: 0.02, sl: 0.01, trail: 0.008,
     maxPos: 4, posSize: 15, riskPct: 2,
     paperBalance: 1000, minScore: 62, fgMin: 20,
@@ -2338,7 +2119,10 @@ function defaultState() {
     pairParams: {}, adaptiveMinScore: 62,
     peakBalance: 0, peakBalanceMode: 'paper',
     drawdownBlock: 0, stats: null,
-    lastGbmRefit: 0
+    lastGbmRefit: 0,
+    // BUG FIX #1: marker ostatniego progu ensemble (20, 40, 60...) na ktorym
+    // rebalans sie odbyl - bez tego kazdy cykl przez cala godzine spamowal.
+    lastEnsembleRebalance: 0
   };
 }
 
@@ -2348,43 +2132,9 @@ function addLog(state, msg, type='info') {
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// FIX: .toFixed(4) na cenie dawal "0.0000" dla PEPE (~$0.000005) w logach i
-// Telegramie - bezuzyteczne. Adaptacyjna precyzja wedlug rzedu wielkosci ceny
-// (ten sam pomysl co juz istniejaca fp() w dashboardzie index.html).
 function fmtPrice(p) {
   if (!isFinite(p)) return String(p);
   if (p >= 1000) return p.toFixed(1);
   if (p >= 1)    return p.toFixed(4);
   if (p >= 0.01) return p.toFixed(6);
-  return p.toFixed(8);
-}
-
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-// HELPERS
-// â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization'
-  };
-}
-
-function jsonResp(data, status=200) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders() }
-  });
-}
-
-function redirectHTML(msg) {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta http-equiv="refresh" content="2;url=/">
-<style>body{background:#020810;color:#00e5a0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-size:1.4em;flex-direction:column;gap:12px;}</style>
-</head><body><div>${msg}</div><div style="color:#334d74;font-size:0.5em">Przekierowanie za 2 sekundy...</div></body></html>`;
-}
-
-
-
-
-
+  return p.to
