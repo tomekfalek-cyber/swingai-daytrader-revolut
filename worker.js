@@ -59,7 +59,7 @@ export default {
 
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const PIN_PATHS = ['/verify-pin', '/change-pin', '/session-check', '/clear-stats'];
+    const PIN_PATHS = ['/verify-pin', '/change-pin', '/session-check', '/clear-stats', '/journal'];
     if (request.method === 'OPTIONS')
       return new Response(null, { status: 204, headers: PIN_PATHS.includes(url.pathname) ? pinCorsHeaders(request) : corsHeaders() });
 
@@ -146,6 +146,19 @@ export default {
       return pinJsonResp({ ok:true }, 200, request);
     }
 
+    if (url.pathname === '/journal') {
+      const state = await getState(env);
+      const limit = parseInt(url.searchParams.get('limit') || '100');
+      const entries = (state.journal || []).slice(0, limit);
+      const fmt = url.searchParams.get('format');
+      if (fmt === 'text') {
+        return new Response(entries.map(e => formatJournalForText(e)).join('\n\n'), {
+          headers: { 'Content-Type': 'text/plain; charset=utf-8', ...pinCorsHeaders(request) }
+        });
+      }
+      return pinJsonResp({ ok:true, count: entries.length, entries }, 200, request);
+    }
+
     if (url.pathname === '/') {
       return new Response(
         '<meta http-equiv="refresh" content="0;url=https://tomekfalek-cyber.github.io/swingai-revolut/">',
@@ -174,7 +187,8 @@ export default {
         ensembleW:    state.ensembleW || null,
         peakBalance:  state.peakBalance || 0,
         drawdownBlock: (state.drawdownBlock || 0) > Date.now(),
-        gbmAccuracyOOS: (state.gbm && state.gbm.accuracyOOS) || null
+        gbmAccuracyOOS: (state.gbm && state.gbm.accuracyOOS) || null,
+        journalRecent: (state.journal || []).slice(0, 20)
       };
       return jsonResp(pub);
     }
@@ -448,8 +462,10 @@ async function runBotCycle(env) {
   try {
     const fg = await getFearGreed(state);
 
-    const btcDrop = await btcDropGuard();
+    const btcInfo = await btcDropGuard();
+    const btcDrop = btcInfo.drop;
     if (btcDrop) addLog(state, 'BTC Guard aktywny — brak nowych long na altcoinach', 'warn');
+    if (btcInfo.pump) addLog(state, 'BTC Guard (pump) aktywny — brak nowych SHORT na altcoinach', 'warn');
 
     await checkPositions(cfg, state, env, ql);
 
@@ -468,7 +484,7 @@ async function runBotCycle(env) {
       sym: s.sym, score: s.score, finalProb: s.finalProb,
       price: s.price, rsiD: s.rsiD, rsi4h: s.rsi4h,
       trend: s.trendD >= 1 ? 'UP' : s.trendD === 0 ? 'FLAT' : 'DN',
-      buy: s.buy, why: s.why,
+      buy: s.buy, shortSignal: s.shortSignal, why: s.why,
       patterns: (s.patterns||[]).map(p => p.name),
       aiMethod: s.aiMethod, regime: s.regime || 'neutral',
       macdHist: s.macdHist, bbPos: s.bbPos,
@@ -477,6 +493,11 @@ async function runBotCycle(env) {
 
     const dailyBase = state.dailyStartBalance > 0 ? state.dailyStartBalance : (cfg.paperBalance || 1000);
     const dailyLossOk = (state.dailyPnl || 0) > -0.05 * dailyBase;
+
+    const blockReason = fg.val < 15 ? 'F&G=' + fg.val + ' ekstremalna panika'
+      : !dailyLossOk ? 'dzienny limit strat -5%'
+      : (state.drawdownBlock || 0) > Date.now() ? 'circuit breaker'
+      : null;
 
     if (fg.val < 15) {
       addLog(state, 'F&G=' + fg.val + ' (ekstremalna panika) — blokada BUY', 'warn');
@@ -489,6 +510,12 @@ async function runBotCycle(env) {
         if ((state.positions || []).length >= cfg.maxPos) break;
         if (sig.buy) {
           await openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew);
+        }
+      }
+      for (const sig of sigs) {
+        if ((state.positions || []).length >= cfg.maxPos) break;
+        if (sig.shortSignal) {
+          await openShort(sig, fg, btcInfo, cfg, state, env, nb, gbm, ql, ew);
         }
       }
     }
@@ -551,6 +578,14 @@ async function runBotCycle(env) {
         state.liveBalance = await revxGetBalance(cfg);
       } catch(e) { /* zachowaj poprzednią wartość */ }
     }
+
+    const cycleJournal = buildCycleJournalEntry({
+      iter: state.iter, fg, btcInfo, sigs,
+      positions: state.positions || [],
+      balance: currentBalance, dailyPnl: state.dailyPnl || 0,
+      blockReason
+    });
+    addJournalEntry(state, cycleJournal);
 
     state.lastCycle = Date.now();
     addLog(state, 'Skan #' + state.iter + ' OK | poz: ' + (state.positions||[]).length + '/' + cfg.maxPos + ' | F&G:' + fg.val, 'ok');
@@ -699,6 +734,81 @@ function calcStats(trades) {
   for (const r of rets) { equity *= (1 + r); if (equity > peak) peak = equity; const dd = (peak - equity)/peak; if (dd > maxDD) maxDD = dd; }
   const winRate = +(rets.filter(r => r > 0).length / rets.length * 100).toFixed(1);
   return { sharpe, sortino, maxDD: +(maxDD * 100).toFixed(1), winRate };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FILTR KONTEKST(1H) → SETUP(15m) → TRIGGER(5m) — dodatkowy twardy gate
+// nakladany NA scoring/SMC powyzej (nie zastepuje go). dir = 'LONG'|'SHORT'.
+// ═══════════════════════════════════════════════════════════════════════════
+function buildContextGate(trendD, dir) {
+  if (dir === 'LONG') {
+    if (trendD >= 1) return { pass: true, reason: null };
+    return { pass: false, reason: 'KONTEKST 1H: brak wyraznego trendu bull (trendD=' + trendD + ')' };
+  }
+  if (trendD <= -1) return { pass: true, reason: null };
+  return { pass: false, reason: 'KONTEKST 1H: brak wyraznego trendu bear (trendD=' + trendD + ')' };
+}
+
+function buildSetupGate(tf, dir) {
+  const price  = tf.c.at(-1);
+  const ema20  = emaLast(tf.c, 20);
+  const ema50  = emaLast(tf.c, 50);
+  const rsiTf  = rsi(tf.c, 14);
+  const distEma20 = Math.abs(price/ema20 - 1) * 100;
+  const distEma50 = Math.abs(price/ema50 - 1) * 100;
+  const nearEma = distEma20 < 1.2 || distEma50 < 1.5;
+
+  if (dir === 'LONG') {
+    const rsiOk      = rsiTf >= 35 && rsiTf <= 58;
+    const notOverext = price <= ema20 * 1.03;
+    if (nearEma && rsiOk && notOverext) return { pass: true, reason: null, rsi: rsiTf };
+    const reason = !nearEma ? 'SETUP 15m: cena za daleko od EMA20/50 — brak pullbacku'
+      : !rsiOk ? 'SETUP 15m: RSI ' + rsiTf.toFixed(0) + ' poza zdrowa strefa korekty'
+      : 'SETUP 15m: cena zbyt rozciagnieta nad EMA20';
+    return { pass: false, reason, rsi: rsiTf };
+  }
+
+  const rsiOk      = rsiTf <= 65 && rsiTf >= 42;
+  const notOverext = price >= ema20 * 0.97;
+  if (nearEma && rsiOk && notOverext) return { pass: true, reason: null, rsi: rsiTf };
+  const reason = !nearEma ? 'SETUP 15m: cena za daleko od EMA20/50 — brak odbicia'
+    : !rsiOk ? 'SETUP 15m: RSI ' + rsiTf.toFixed(0) + ' poza zdrowa strefa odbicia'
+    : 'SETUP 15m: cena zbyt rozciagnieta pod EMA20';
+  return { pass: false, reason, rsi: rsiTf };
+}
+
+function buildTriggerGate(tf, dir) {
+  const o = tf.o.at(-1), h = tf.h.at(-1), l = tf.l.at(-1), c = tf.c.at(-1);
+  const vSum = tf.v.slice(-20).reduce((a,b)=>a+b,0);
+  const volXR = vSum > 0 ? tf.v.at(-1) / (vSum/20) : 1;
+  const goodVolume = volXR >= 1.15;
+  const macdTf = macdFull(tf.c);
+  const rsiTf  = rsi(tf.c, 14);
+  const body   = Math.abs(c - o);
+
+  if (dir === 'LONG') {
+    const bullish = c > o;
+    const upperWick = h - Math.max(o, c);
+    const okWick = upperWick < body * 0.9 + 1e-9;
+    const momentum = macdTf.hist > 0 || rsiTf > 45;
+    if (bullish && goodVolume && momentum && okWick) return { pass: true, reason: null, volXR };
+    const reason = !bullish ? 'TRIGGER 5m: ostatnia swieca spadkowa — brak triggera'
+      : !goodVolume ? 'TRIGGER 5m: wolumen za niski (' + volXR.toFixed(2) + 'x)'
+      : !momentum ? 'TRIGGER 5m: momentum nie potwierdza (RSI ' + rsiTf.toFixed(0) + ')'
+      : 'TRIGGER 5m: za duzy gorny knot — odrzucenie wzrostu';
+    return { pass: false, reason, volXR };
+  }
+
+  const bearish = c < o;
+  const lowerWick = Math.min(o, c) - l;
+  const okWick = lowerWick < body * 0.9 + 1e-9;
+  const momentum = macdTf.hist < 0 || rsiTf < 55;
+  if (bearish && goodVolume && momentum && okWick) return { pass: true, reason: null, volXR };
+  const reason = !bearish ? 'TRIGGER 5m: ostatnia swieca wzrostowa — brak triggera'
+    : !goodVolume ? 'TRIGGER 5m: wolumen za niski (' + volXR.toFixed(2) + 'x)'
+    : !momentum ? 'TRIGGER 5m: momentum nie potwierdza (RSI ' + rsiTf.toFixed(0) + ')'
+    : 'TRIGGER 5m: za duzy dolny knot — odrzucenie spadku';
+  return { pass: false, reason, volXR };
 }
 
 async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adaptiveMinScore) {
@@ -916,7 +1026,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     why.push('Score OK, ale brak confluence (' + confluence + '/4 rodzin sygnalow) — wejscie odrzucone');
   }
 
-  const buy = finalProb >= minScore / 100 && confluence >= 2 && !bearBias;
+  const scoreBuy = finalProb >= minScore / 100 && confluence >= 2 && !bearBias;
 
   const shortThreshold = (100 - minScore) / 100;
   const bearConfluence = [
@@ -925,7 +1035,30 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || nearBearOB || (liqSweep && liqSweep.type === 'bearish')),
     (volR > 1.3 || vol4R > 1.3)
   ].filter(Boolean).length;
-  const shortSignal = finalProb <= shortThreshold && bearConfluence >= 2 && !bullBias;
+  const scoreShort = finalProb <= shortThreshold && bearConfluence >= 2 && !bullBias;
+
+  // Dodatkowy "twardy" filtr wejscia: KONTEKST(1H) -> SETUP(15m pullback/odbicie)
+  // -> TRIGGER(5m swieca zapalajaca). Score+SMC powyzej wybiera KANDYDATA, ale
+  // to ten filtr decyduje o TIMINGU - odcina sygnaly, gdzie kontekst/pullback/
+  // swieca nie sa jednoczesnie spelnione, nawet przy wysokim score.
+  const ctxLong     = buildContextGate(trendD, 'LONG');
+  const setupLong   = ctxLong.pass   ? buildSetupGate(h4, 'LONG')   : { pass:false, reason:null };
+  const triggerLong = (ctxLong.pass && setupLong.pass) ? buildTriggerGate(h1, 'LONG') : { pass:false, reason:null };
+  const stagedLong  = ctxLong.pass && setupLong.pass && triggerLong.pass;
+  if (scoreBuy && !stagedLong) {
+    why.push((!ctxLong.pass ? ctxLong.reason : !setupLong.pass ? setupLong.reason : triggerLong.reason) || 'Filtr KONTEKST/SETUP/TRIGGER: odrzucone');
+  }
+
+  const ctxShort     = buildContextGate(trendD, 'SHORT');
+  const setupShort   = ctxShort.pass   ? buildSetupGate(h4, 'SHORT')   : { pass:false, reason:null };
+  const triggerShort = (ctxShort.pass && setupShort.pass) ? buildTriggerGate(h1, 'SHORT') : { pass:false, reason:null };
+  const stagedShort  = ctxShort.pass && setupShort.pass && triggerShort.pass;
+  if (scoreShort && !stagedShort) {
+    why.push((!ctxShort.pass ? ctxShort.reason : !setupShort.pass ? setupShort.reason : triggerShort.reason) || 'Filtr KONTEKST/SETUP/TRIGGER: odrzucone');
+  }
+
+  const buy         = scoreBuy && stagedLong;
+  const shortSignal = scoreShort && stagedShort;
   const shortLevels = shortSignal ? {
     tp: price * (1 - Math.max(cfg.tp, atrD/price*2.5)),
     sl: price * (1 + Math.max(cfg.sl, atrD/price*1.5)),
@@ -938,6 +1071,9 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     macdHist: macdD.hist, macdLine: macdD.line,
     bbPos: bbD.pos, trendD, ema20, ema50, atrD,
     score, finalProb: +finalProb.toFixed(3), buy, shortSignal, shortLevels,
+    scoreBuy, scoreShort,
+    gates: { ctxLong: ctxLong.pass, setupLong: setupLong.pass, triggerLong: triggerLong.pass,
+              ctxShort: ctxShort.pass, setupShort: setupShort.pass, triggerShort: triggerShort.pass },
     nbPred, gbmProb: +gbmProb.toFixed(3), qlSugg, aiMethod,
     obiRatio: obiData.ratio || 0.5, obiScore, spreadPct: obiData.spreadPct,
     patterns: patResult.patterns,
@@ -973,6 +1109,61 @@ async function checkPositions(cfg, state, env, ql) {
     try {
       const price = await getLastPrice(pos.sym);
       pos.cp = price;
+      const isShort = pos.side === 'SHORT';
+
+      if (isShort) {
+        // SHORT (PAPER-only): zysk gdy cena SPADA, wiec kierunki TP/SL/trailing
+        // sa odwrocone wzgledem LONG. lowP zamiast highP.
+        if (!isFinite(pos.lowP) || price < pos.lowP) pos.lowP = price;
+
+        const pnlPct = (pos.entry - price) / pos.entry * 100;
+        const ageMs  = Date.now() - pos.entryTs;
+        const nearTimeout  = ageMs > TIMEOUT_MS * 0.75;
+        const effTrailDist = (nearTimeout && pnlPct > 0) ? pos.trailDist * 0.5 : pos.trailDist;
+        const trail = pos.lowP * (1 + effTrailDist);
+        let reason = null;
+
+        if (ageMs > TIMEOUT_MS)                                    reason = 'TIMEOUT 8h';
+        else if (price <= (pos.tp > 0 ? pos.tp : pos.entry * (1 - cfg.tp))) reason = 'TAKE PROFIT';
+        else if (price >= (pos.partialClosed ? pos.sl : (pos.sl > 0 ? pos.sl : pos.entry * (1 + cfg.sl)))) reason = 'STOP LOSS';
+        else if (price >= trail && pnlPct > 1.5)                   reason = 'TRAILING STOP';
+
+        const _tpPct = pos.tp > 0 ? (pos.entry - pos.tp) / pos.entry * 100 : cfg.tp * 100;
+        if (!reason && pnlPct >= _tpPct * 0.65 && !pos.partialClosed && !pos.partialSelling) {
+          pos.partialSellingAt = Date.now();
+          pos.partialSelling = true;
+          try {
+            const fillQty  = pos.qty / 2;
+            const fillPrice = price * (1 + SLIPPAGE_PAPER); // odkupujemy (buy-to-cover) — plac za nas
+            const partialFeeCost = (pos.entry * fillQty) * FEE + (fillPrice * fillQty) * FEE;
+            const realizedPnl = (pos.entry - fillPrice) * fillQty - partialFeeCost;
+            const closedSize  = pos.size * (fillQty / pos.qty);
+            pos.qty  = pos.qty - fillQty;
+            pos.size = pos.size - closedSize;
+            pos.partialClosed = true;
+            pos.partialSelling = false;
+            pos.sl = pos.entry * (1 - FEE * 2);
+            // SHORT jest zawsze paper (patrz komentarz przy openShort), wiec
+            // zawsze rozliczamy przez paperBalance niezaleznie od cfg.mode.
+            state.paperBalance = (state.paperBalance || 0) + closedSize + realizedPnl;
+            addLog(state, 'PARTIAL TP SHORT(paper) ' + pos.sym + ' +$' + realizedPnl.toFixed(2) + ' (' + pnlPct.toFixed(1) + '%) — reszta jedzie dalej', 'ok');
+          } catch(e) {
+            pos.partialSelling = false;
+            addLog(state, 'Partial TP (short) error: ' + e.message, 'err');
+          }
+        }
+
+        if (reason) {
+          pos.closing = true;
+          const closed = await closePosition(pos, price, reason, cfg, state, ql);
+          if (closed === false) { pos.closing = false; updated.push(pos); }
+        } else {
+          updated.push(pos);
+        }
+        await sleep(150);
+        continue;
+      }
+
       if (price > pos.highP) pos.highP = price;
 
       const pnlPct = (price - pos.entry) / pos.entry * 100;
@@ -1126,12 +1317,14 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
 
   if (!Array.isArray(state.positions)) state.positions = [];
 
+  let newPos = null;
   if (cfg.mode === 'live' && cfg.revxApiKey && cfg.revxPrivKey) {
     try {
       const res = await revxMarketBuy(adjSig.sym, posSize, cfg);
       const execP = res.price || adjSig.price;
       const el    = calcDynamicLevels(execP, adjSig.atrD, cfg, pp, adjSig.spreadPct);
-      state.positions.push(buildPosition(adjSig, execP, res.qty, el, posSize, ql));
+      newPos = buildPosition(adjSig, execP, res.qty, el, posSize, ql, 'LONG');
+      state.positions.push(newPos);
       if (!state.dailyStartBalance || state.dailyStartBalance <= 0) {
         try {
           const liveBal = await revxGetBalance(cfg);
@@ -1148,7 +1341,8 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
     const paperExecPrice = adjSig.price * (1 + SLIPPAGE_PAPER);
     const qty = posSize / paperExecPrice;
     const paperLevels = calcDynamicLevels(paperExecPrice, adjSig.atrD, cfg, pp, adjSig.spreadPct);
-    state.positions.push(buildPosition(adjSig, paperExecPrice, qty, paperLevels, posSize, ql));
+    newPos = buildPosition(adjSig, paperExecPrice, qty, paperLevels, posSize, ql, 'LONG');
+    state.positions.push(newPos);
     if (cfg.mode === 'paper') {
       state.paperBalance = Math.max(0, (state.paperBalance || paperBal) - posSize);
     }
@@ -1156,6 +1350,7 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
       state.dailyStartBalance = paperBal;
     }
   }
+  if (newPos) addJournalEntry(state, buildEntryJournalEntry(adjSig, newPos, cfg));
 
   const _pairName = adjSig.sym.replace('XBT','BTC').replace('USDT','').replace('USDC','');
   const _modeLabel = cfg.mode === 'live' ? 'LIVE (Revolut X)' : 'PAPER (symulacja)';
@@ -1172,9 +1367,127 @@ async function openTrade(sig, fg, btcDrop, cfg, state, env, nb, gbm, ql, ew) {
     'Tryb: ' + _modeLabel);
 }
 
-function buildPosition(sig, price, qty, levels, size, ql) {
+// SHORT jest wykonywany WYLACZNIE w PAPER — Revolut X (spot) nie oferuje
+// realnego short-sellingu. Nawet gdy cfg.mode==='live', ta funkcja NIGDY nie
+// wysyla zadnego zlecenia na Revolut X — tylko symuluje pozycje w state.
+async function openShort(sig, fg, btcInfo, cfg, state, env, nb, gbm, ql, ew) {
+  if ((state.positions||[]).some(p => p.sym === sig.sym)) return;
+  if (((state.cooldown || {})[sig.sym] || 0) > Date.now()) {
+    addLog(state, 'Cooldown ' + sig.sym, 'warn'); return;
+  }
+  if ((state.globalBlockUntil||0) > Date.now()) {
+    addLog(state, 'Globalna blokada aktywna', 'warn'); return;
+  }
+  const pp0 = (state.pairParams||{})[sig.sym] || PAIR_PARAMS_DEFAULT[sig.sym];
+  const effMinScore = pp0 ? pp0.minScore : (state.adaptiveMinScore || cfg.minScore);
+  const pumpReason = isPumpDump(sig);
+  if (pumpReason) { addLog(state, 'Pump/dump guard (' + pumpReason + '): ' + sig.sym + ' — pomijam SHORT', 'warn'); return; }
+  if (isVolumeAnomaly(sig, effMinScore)) { addLog(state, 'Vol anomaly: ' + sig.sym + ' vol=' + sig.volR.toFixed(2) + 'x — pomijam SHORT', 'warn'); return; }
+  if (isDeadHour()) { addLog(state, 'Dead hour (02-05 UTC): ' + sig.sym + ' — pomijam SHORT', 'warn'); return; }
+
+  if (btcInfo.pump && sig.sym !== 'XBTUSDT') {
+    addLog(state, 'BTC Guard (pump): pomijam SHORT ' + sig.sym, 'warn'); return;
+  }
+  if (corrBlocked(sig.sym, state)) return;
+
+  let adjSig = sig;
+  const fgGreedThresh = 100 - cfg.fgMin;
+  if (fg.val > fgGreedThresh) {
+    const newProb = Math.max(0, sig.finalProb - 0.10);
+    adjSig = Object.assign({}, sig, { finalProb: newProb, score: Math.max(0, sig.score - 10) });
+    if (adjSig.finalProb < effMinScore / 100) {
+      addLog(state, 'F&G=' + fg.val + ' (chciwosc) — po karze za slaby score pomijam SHORT ' + sig.sym, 'warn'); return;
+    }
+  }
+
+  const paperBal = state.paperBalance > 0 ? state.paperBalance : (cfg.paperBalance || 1000);
+  const total    = cfg.mode === 'live' ? (state.liveBalance > 0 ? state.liveBalance : paperBal) : paperBal;
+  const micro    = isMicroAccount(total);
+
+  if (micro && (state.positions || []).length >= 1) {
+    addLog(state, 'Micro konto — czekam na zamkniecie obecnej pozycji', 'warn'); return;
+  }
+
+  if (!micro) {
+    const totalRisk = (state.positions || []).reduce((s, p) => {
+      const slPct = p.partialClosed ? 0 : (p.entry > 0 ? Math.abs((p.sl || 0) - p.entry) / p.entry : cfg.sl);
+      return s + (p.size||0) * slPct;
+    }, 0);
+    const portfolioHeat = totalRisk / (total > 0 ? total : 1);
+    if (portfolioHeat > 0.08) {
+      addLog(state, 'Portfolio heat >8% — blokada SHORT (' + (portfolioHeat*100).toFixed(1) + '%)', 'warn');
+      return;
+    }
+  }
+
+  const sl = adjSig.shortLevels.sl, tp = adjSig.shortLevels.tp, rr = adjSig.shortLevels.rr;
+  const slPct = (sl - adjSig.price) / adjSig.price;
+
+  const totalRoundTripCost = FEE * 2 + SLIPPAGE_PAPER * 2;
+  const tpOffsetActual = (adjSig.price - tp) / adjSig.price;
+  if (tpOffsetActual < totalRoundTripCost * MIN_COST_COVERAGE_RATIO) {
+    addLog(state, 'SHORT ' + sig.sym + ' odrzucony: TP=' + (tpOffsetActual*100).toFixed(2) +
+      '% < ' + (totalRoundTripCost * MIN_COST_COVERAGE_RATIO * 100).toFixed(2) +
+      '% (koszt rundy x' + MIN_COST_COVERAGE_RATIO + ')', 'warn');
+    return;
+  }
+
+  let posSize = kellySize(cfg, state, total, slPct);
+
+  const st = state.stats;
+  if (st && (state.trades || []).length >= 15 && (st.sharpe < 0 || st.maxDD > 20)) {
+    posSize = Math.max(5, Math.round(posSize * 0.5 * 100) / 100);
+    addLog(state, 'Throttle ryzyka (Sharpe=' + st.sharpe + ' maxDD=' + st.maxDD + '%) — rozmiar SHORT x0.5', 'warn');
+  }
+
+  const minSize = micro ? 1 : 10;
+  if (posSize < minSize) {
+    addLog(state, 'Za mala pozycja (' + posSize.toFixed(2) + '$) — pomijam SHORT ' + sig.sym, 'warn'); return;
+  }
+
+  addLog(state,
+    'SHORT(paper) ' + adjSig.sym + ' @ ' + fmtPrice(adjSig.price) +
+    ' | score=' + adjSig.score + ' finalProb=' + (adjSig.finalProb*100).toFixed(1) + '%' +
+    ' | $' + posSize.toFixed(2) + ' TP=' + fmtPrice(tp) + ' SL=' + fmtPrice(sl) + ' R:R=' + rr +
+    ' | ' + adjSig.aiMethod, 'ok');
+
+  if (!Array.isArray(state.positions)) state.positions = [];
+
+  const atrPctS = adjSig.atrD / adjSig.price;
+  const paperExecPrice = adjSig.price * (1 - SLIPPAGE_PAPER);
+  const qty = posSize / paperExecPrice;
+  const levels = { tp, sl, trail: Math.max(cfg.trail, atrPctS * 1.2), rr };
+  const newPos = buildPosition(adjSig, paperExecPrice, qty, levels, posSize, ql, 'SHORT');
+  state.positions.push(newPos);
+
+  // SHORT jest zawsze paper (patrz komentarz nad funkcja) — margin rezerwujemy
+  // z paperBalance niezaleznie od cfg.mode.
+  state.paperBalance = Math.max(0, (state.paperBalance || paperBal) - posSize);
+  if (!state.dailyStartBalance || state.dailyStartBalance <= 0) {
+    state.dailyStartBalance = paperBal;
+  }
+
+  addJournalEntry(state, buildEntryJournalEntry(adjSig, newPos, cfg));
+
+  const _pairName = adjSig.sym.replace('XBT','BTC').replace('USDT','').replace('USDC','');
+  await tgSend(cfg,
+    'SYGNAL SHORT (PAPER) — ' + _pairName + '\n\n' +
+    'Cena wejscia: $' + fmtPrice(adjSig.price) + '\n' +
+    'Rozmiar pozycji: $' + posSize.toFixed(2) + ' (Kelly)\n' +
+    'Take Profit: $' + fmtPrice(tp) + '\n' +
+    'Stop Loss: $' + fmtPrice(sl) + '\n' +
+    'Zysk/Ryzyko: ' + rr + '\n\n' +
+    'Wynik AI: ' + adjSig.score + '/100 | Pewnosc: ' + (adjSig.finalProb*100).toFixed(1) + '%\n' +
+    'Metoda: ' + adjSig.aiMethod + '\n' +
+    'Powody: ' + adjSig.why.slice(0,4).join(', ') + '\n\n' +
+    'Tryb: PAPER (symulacja — Revolut X nie wspiera realnych shortow)');
+}
+
+function buildPosition(sig, price, qty, levels, size, ql, side) {
+  side = side || 'LONG';
   return {
-    sym: sig.sym, entry: price, qty, cp: price, highP: price,
+    sym: sig.sym, side, entry: price, qty,
+    cp: price, highP: price, lowP: price,
     sl: levels.sl, tp: levels.tp, trailDist: levels.trail,
     entryTs: Date.now(), score: sig.score, finalProb: sig.finalProb,
     aiMethod: sig.aiMethod, nbFeatures: sig.nbFeatures, gbmFeatures: sig.gbmFeatures,
@@ -1184,8 +1497,14 @@ function buildPosition(sig, price, qty, levels, size, ql) {
 }
 
 async function closePosition(pos, price, reason, cfg, state, ql) {
+  const isShort = pos.side === 'SHORT';
   let execPrice = price;
-  if (cfg.mode === 'live' && cfg.revxApiKey && cfg.revxPrivKey) {
+
+  if (isShort) {
+    // SHORT jest zawsze paper — odkupujemy (buy-to-cover) w symulacji, nigdy
+    // realne zlecenie na Revolut X (nie wspiera short-sellingu na spot).
+    execPrice = price * (1 + SLIPPAGE_PAPER);
+  } else if (cfg.mode === 'live' && cfg.revxApiKey && cfg.revxPrivKey) {
     try {
       const res = await revxMarketSell(pos.sym, pos.qty, cfg);
       execPrice = res.price || price;
@@ -1197,7 +1516,7 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
     execPrice = price * (1 - SLIPPAGE_PAPER);
   }
 
-  const grossPnl = (execPrice - pos.entry) * pos.qty;
+  const grossPnl = isShort ? (pos.entry - execPrice) * pos.qty : (execPrice - pos.entry) * pos.qty;
   const feeCost  = pos.size * FEE + (pos.size + grossPnl) * FEE;
   const pnl      = grossPnl - feeCost;
   const pnlPct   = pnl / pos.size * 100;
@@ -1210,7 +1529,7 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
     ? +(((execPrice - price) / price) * 100).toFixed(3)
     : 0;
 
-  if (cfg.mode === 'paper') {
+  if (isShort || cfg.mode === 'paper') {
     state.paperBalance = (state.paperBalance || 0) + pos.size + pnl;
   }
 
@@ -1227,13 +1546,15 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
     state.consLoss = 0;
   }
 
-  if (pos.qlSig && ql) {
+  // QL zna tylko akcje BUY/HOLD (semantyka "long-only") — nie aktualizujemy go
+  // wynikami SHORT, zeby nie zaburzyc modelu uzywanego do sygnalow LONG.
+  if (pos.qlSig && ql && !isShort) {
     const reward = Math.max(-1, Math.min(1, pnlPct / 10));
     ql.update(pos.qlSig, 'BUY', reward, null);
   }
 
   const trade = {
-    sym: pos.sym, entry: pos.entry, exit: execPrice, qty: pos.qty,
+    sym: pos.sym, side: pos.side || 'LONG', entry: pos.entry, exit: execPrice, qty: pos.qty,
     pnl: +pnl.toFixed(4), pnlPct: +pnlPct.toFixed(2),
     execVsSignalPricePct,
     durH, reason, score: pos.score, finalProb: pos.finalProb,
@@ -1246,22 +1567,221 @@ async function closePosition(pos, price, reason, cfg, state, ql) {
   const _closeIcon = pnl >= 0 ? '[+]' : '[-]';
   const _closeSym = pos.sym.replace('XBT','BTC').replace('USDT','').replace('USDC','');
   addLog(state,
-    _closeIcon + ' ' + pos.sym + ' ' + reason +
+    _closeIcon + ' ' + (isShort ? 'SHORT(paper) ' : '') + pos.sym + ' ' + reason +
     ' P/L: ' + (pnl>=0?'+':'') + '$' + pnl.toFixed(2) +
     ' (' + pnlPct.toFixed(2) + '%) | ' + durH + 'h | R:R=' + (pos.rr||'?') +
     ' | exec-signal=' + execVsSignalPricePct.toFixed(3) + '%',
     pnl >= 0 ? 'ok' : 'err');
+
+  addJournalEntry(state, buildExitJournalEntry(pos, { exitPrice: execPrice, pnl, pnlPct, reason, durH }));
 
   const _reasonPL = reason === 'TAKE PROFIT' ? 'REALIZACJA ZYSKU' :
     reason === 'STOP LOSS' ? 'STOP LOSS AKTYWOWANY' :
     reason === 'TRAILING STOP' ? 'STOP KROCZACY' :
     reason === 'TIMEOUT 8h' ? 'KONIEC CZASU (8h)' : reason;
   await tgSend(cfg,
-    (pnl>=0?'[+]':'[-]') + ' ' + _reasonPL + ' — ' + _closeSym + '\n\n' +
+    (pnl>=0?'[+]':'[-]') + ' ' + (isShort ? 'SHORT(paper) ' : '') + _reasonPL + ' — ' + _closeSym + '\n\n' +
     'Wynik: ' + (pnl>=0?'+':'') + '$' + pnl.toFixed(2) + ' (' + pnlPct.toFixed(2) + '%)\n' +
     'Czas trwania: ' + durH + 'h\n' +
     'Score wejscia: ' + pos.score + '/100\n' +
-    'Tryb: ' + (cfg.mode === 'live' ? 'LIVE (Revolut X)' : 'PAPER'));
+    'Tryb: ' + (isShort ? 'PAPER (short)' : (cfg.mode === 'live' ? 'LIVE (Revolut X)' : 'PAPER')));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DZIENNIK — bot sam wypelnia (cykl / wejscie / wyjscie / post-mortem)
+// ═══════════════════════════════════════════════════════════════════════════
+function addJournalEntry(state, entry) {
+  if (!state.journal) state.journal = [];
+  state.journal = [entry, ...state.journal].slice(0, 500);
+}
+
+function fmtSignedPct(n) {
+  if (!isFinite(n)) return String(n);
+  return (n >= 0 ? '+' : '') + n.toFixed(2);
+}
+
+function describeMarketRegime(btcInfo, fg) {
+  const btc = btcInfo.change24h || 0;
+  const fgv = fg.val;
+  let tone;
+  if (btc > 2 && fgv > 55) tone = 'bycza euforia';
+  else if (btc > 1) tone = 'lekko byczo';
+  else if (btc < -2 && fgv < 40) tone = 'strach na rynku';
+  else if (btc < -1) tone = 'lekko niedzwiedzio';
+  else tone = 'neutralnie';
+  const fgLabel = fgv < 25 ? 'strach' : fgv < 45 ? 'ostroznosc' : fgv < 55 ? 'neutralnie' : fgv < 75 ? 'chciwosc' : 'euforia';
+  return tone + ' (BTC 24h ' + fmtSignedPct(btc) + '%, F&G ' + fgv + ' — ' + fgLabel + ')';
+}
+
+function describeExitReason(reason) {
+  const map = {
+    'TAKE PROFIT': 'Take Profit — cel osiagniety',
+    'STOP LOSS': 'Stop Loss — struktura zepsuta',
+    'TRAILING STOP': 'Trailing Stop — cena sie odwrocila',
+    'TIMEOUT 8h': 'Timeout — brak potwierdzenia w 8h'
+  };
+  return map[reason] || reason;
+}
+
+function analyzeThesisOutcome(pos, exitPrice, reason) {
+  const notes = [];
+  let verdict = '';
+  const isShort = pos.side === 'SHORT';
+  const wasProfit = isShort ? exitPrice < pos.entry : exitPrice > pos.entry;
+  const tpReached = isShort ? exitPrice <= pos.tp : exitPrice >= pos.tp;
+
+  if (reason === 'TAKE PROFIT' || tpReached) {
+    verdict = 'Teza zrealizowana w pelni — cena doszla do celu.';
+    notes.push('Cel osiagniety zgodnie z planem, wykonanie bez uwag.');
+  } else if (reason === 'TRAILING STOP' && wasProfit) {
+    const totalMove = Math.abs(pos.tp - pos.entry);
+    const gotMove   = Math.abs(exitPrice - pos.entry);
+    const pctOfTarget = totalMove > 0 ? (gotMove / totalMove * 100).toFixed(0) : '0';
+    verdict = 'Teza zrealizowana czesciowo — trailing zabezpieczyl ' + pctOfTarget + '% drogi do celu.';
+    if (pctOfTarget >= 80) notes.push('Trailing zadzialal prawidlowo — cena sie odwrocila, ochrona zadzialala.');
+    else if (pctOfTarget >= 50) notes.push('Trailing zamknal pozycje w polowie drogi — mozna rozwazyc szerszy trailing.');
+    else notes.push('Trailing zamknal za wczesnie — cena nie miala miejsca na oddech.');
+  } else if (reason === 'STOP LOSS' || reason === 'TIMEOUT 8h') {
+    verdict = 'Teza nie zrealizowala sie — cena poszla w druga strone.';
+    notes.push('Setup nie zadzialal — to czesc procesu, nie kazdy trade wygrywa.');
+    if (reason === 'TIMEOUT 8h') notes.push('Pozycja stala w miejscu — brak momentum w oknie 8h.');
+    else notes.push('Stop zadzialal zgodnie z planem — strata pod kontrola.');
+  } else {
+    verdict = 'Zamkniete z powodu: ' + reason;
+  }
+  return { verdict, notes };
+}
+
+function buildEntryJournalEntry(sig, pos, cfg) {
+  const now = new Date();
+  const sym = pos.sym.replace('XBT','BTC').replace('USDT','').replace('USDC','');
+  const isShort = pos.side === 'SHORT';
+  const lines = [];
+
+  lines.push((isShort ? '⚡ OTWARCIE SHORT (PAPER): ' : '⚡ OTWARCIE LONG: ') + sym);
+  lines.push('Czas: ' + now.toISOString().replace('T',' ').slice(0,19) + ' UTC');
+  lines.push('Cena wejscia: $' + fmtPrice(pos.entry));
+  lines.push('Rozmiar: $' + pos.size.toFixed(2) + ' (Kelly)');
+  lines.push('Take Profit: $' + fmtPrice(pos.tp) + ' | Stop Loss: $' + fmtPrice(pos.sl) + ' | R:R ' + pos.rr);
+  lines.push('Score: ' + sig.score + '/100 | Pewnosc: ' + (sig.finalProb*100).toFixed(1) + '% | Metoda: ' + sig.aiMethod);
+  lines.push('');
+  lines.push('POWODY WEJSCIA:');
+  for (const w of (sig.why || []).slice(0, 8)) lines.push('  • ' + w);
+  lines.push('');
+  lines.push('FILTR KONTEKST/SETUP/TRIGGER:');
+  const g = sig.gates || {};
+  if (isShort) {
+    lines.push('  • KONTEKST 1H: ' + (g.ctxShort ? 'OK (trend bear)' : 'brak'));
+    lines.push('  • SETUP 15m: ' + (g.setupShort ? 'OK (odbicie do EMA)' : 'brak'));
+    lines.push('  • TRIGGER 5m: ' + (g.triggerShort ? 'OK (swieca spadkowa + wolumen)' : 'brak'));
+  } else {
+    lines.push('  • KONTEKST 1H: ' + (g.ctxLong ? 'OK (trend bull)' : 'brak'));
+    lines.push('  • SETUP 15m: ' + (g.setupLong ? 'OK (pullback do EMA)' : 'brak'));
+    lines.push('  • TRIGGER 5m: ' + (g.triggerLong ? 'OK (swieca wzrostowa + wolumen)' : 'brak'));
+  }
+  lines.push('');
+  lines.push('INWALIDACJA TEZY:');
+  if (isShort) {
+    lines.push('  • Zamkniecie 1H powyzej $' + fmtPrice(pos.sl) + ' — struktura bear sie psuje');
+  } else {
+    lines.push('  • Zamkniecie 1H ponizej $' + fmtPrice(pos.sl) + ' — struktura bull sie psuje');
+  }
+  lines.push('  • Cena nie potwierdza w ciagu 8h — wychodze (TIMEOUT)');
+
+  return {
+    ts: now.getTime(), tsISO: now.toISOString(), type: 'entry',
+    sym: pos.sym, side: pos.side, entry: pos.entry, tp: pos.tp, sl: pos.sl,
+    size: pos.size, rr: pos.rr, mode: isShort ? 'paper (short)' : cfg.mode,
+    title: (isShort ? 'OTWARCIE SHORT (PAPER) ' : 'OTWARCIE LONG ') + sym + ' @ $' + fmtPrice(pos.entry),
+    summary: 'Score ' + sig.score + '/100, ' + sig.aiMethod,
+    lines, severity: 'entry'
+  };
+}
+
+function buildExitJournalEntry(pos, closeInfo) {
+  const now = new Date();
+  const sym = pos.sym.replace('XBT','BTC').replace('USDT','').replace('USDC','');
+  const { exitPrice, pnl, pnlPct, reason, durH } = closeInfo;
+  const isShort = pos.side === 'SHORT';
+  const lines = [];
+
+  const emoji = pnl >= 0 ? '✓' : '✗';
+  lines.push(emoji + ' ZAMKNIECIE ' + (isShort ? 'SHORT (PAPER)' : 'LONG') + ': ' + sym);
+  lines.push('Czas: ' + now.toISOString().replace('T',' ').slice(0,19) + ' UTC');
+  lines.push('Powod: ' + describeExitReason(reason));
+  lines.push('Cena wejscia: $' + fmtPrice(pos.entry) + ' → wyjscia: $' + fmtPrice(exitPrice));
+  lines.push('Wynik: ' + fmtSignedPct(pnl) + '$ (' + fmtSignedPct(pnlPct) + '%)');
+  lines.push('Czas trwania: ' + durH + 'h');
+  lines.push('');
+  lines.push('POST-MORTEM:');
+  const thesis = analyzeThesisOutcome(pos, exitPrice, reason);
+  lines.push('  • ' + thesis.verdict);
+  for (const n of thesis.notes) lines.push('  • ' + n);
+
+  return {
+    ts: now.getTime(), tsISO: now.toISOString(), type: 'exit',
+    sym: pos.sym, side: pos.side, entry: pos.entry, exit: exitPrice,
+    pnl, pnlPct, reason, durH,
+    title: emoji + ' ZAMKNIECIE ' + (isShort?'SHORT ':'LONG ') + sym + ' ' + fmtSignedPct(pnlPct) + '%',
+    summary: describeExitReason(reason),
+    lines, severity: pnl >= 0 ? 'ok' : 'err'
+  };
+}
+
+function buildCycleJournalEntry(data) {
+  const { iter, fg, btcInfo, sigs, positions, balance, dailyPnl, blockReason } = data;
+  const now = new Date();
+  const lines = [];
+
+  lines.push('Rezim rynku: ' + describeMarketRegime(btcInfo, fg));
+  lines.push('Kapital: $' + balance.toFixed(2) + ' | P&L dzis: ' + fmtSignedPct(dailyPnl) + '$');
+  if (blockReason) lines.push('⛔ BLOKADA WEJSC: ' + blockReason);
+
+  if (positions.length > 0) {
+    lines.push('');
+    lines.push('Otwarte pozycje (' + positions.length + '):');
+    for (const p of positions) {
+      const sideTag = p.side === 'SHORT' ? 'SHORT(paper)' : 'LONG';
+      const pnlPct = p.cp ? (p.side === 'SHORT'
+        ? ((p.entry - p.cp) / p.entry * 100)
+        : ((p.cp - p.entry) / p.entry * 100)) : 0;
+      lines.push('  • [' + sideTag + '] ' + p.sym.replace('XBT','BTC').replace('USDT','') + ' @ ' + fmtPrice(p.entry) + ' (PnL: ' + fmtSignedPct(pnlPct) + '%)');
+    }
+  }
+
+  const passedGate = sigs.filter(s => s.buy || s.shortSignal);
+  if (passedGate.length > 0) {
+    lines.push('');
+    lines.push('Sygnaly, ktore przeszly score+SMC+KONTEKST/SETUP/TRIGGER:');
+    for (const s of passedGate) {
+      const dir = s.buy ? 'LONG' : 'SHORT(paper)';
+      lines.push('  • ' + s.sym.replace('XBT','BTC').replace('USDT','') + ': ' + dir + ' — score ' + s.score + '/100');
+    }
+  }
+
+  const nearMiss = sigs.filter(s => (s.scoreBuy && !s.buy) || (s.scoreShort && !s.shortSignal));
+  if (nearMiss.length > 0) {
+    lines.push('');
+    lines.push('Wysoki score, ale odrzucone przez filtr KONTEKST/SETUP/TRIGGER:');
+    for (const s of nearMiss.slice(0, 5)) {
+      const reasonLine = (s.why || []).find(w => w.startsWith('KONTEKST') || w.startsWith('SETUP') || w.startsWith('TRIGGER'));
+      lines.push('  • ' + s.sym.replace('XBT','BTC').replace('USDT','') + ': ' + (reasonLine || 'filtr timing odrzucil'));
+    }
+  }
+
+  if (sigs.length === 0) lines.push('', 'Brak danych z rynku w tym cyklu.');
+
+  return {
+    ts: now.getTime(), tsISO: now.toISOString(), type: 'cycle', iter,
+    title: 'Skan #' + iter,
+    summary: describeMarketRegime(btcInfo, fg),
+    lines, severity: blockReason ? 'warn' : 'info'
+  };
+}
+
+function formatJournalForText(entry) {
+  const header = '═══ ' + (entry.title || entry.type.toUpperCase()) + ' — ' + (entry.tsISO || '').slice(0,16).replace('T',' ') + ' ═══';
+  return header + '\n' + entry.lines.join('\n');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1294,10 +1814,10 @@ async function btcDropGuard() {
     const r = await fetchWithTimeout(`${BYBIT_BASE}/v5/market/tickers?category=spot&symbol=BTCUSDT`);
     const d = await r.json();
     const t = (d.result && d.result.list && d.result.list[0]) || null;
-    if (!t) return false;
+    if (!t) return { drop: false, pump: false, change24h: 0 };
     const pct = +(t.price24hPcnt || 0) * 100;
-    return pct < -4;
-  } catch(e) { return false; }
+    return { drop: pct < -4, pump: pct > 4, change24h: pct };
+  } catch(e) { return { drop: false, pump: false, change24h: 0 }; }
 }
 
 function corrBlocked(sym, state) {
@@ -2122,7 +2642,8 @@ function defaultState() {
     lastGbmRefit: 0,
     // BUG FIX #1: marker ostatniego progu ensemble (20, 40, 60...) na ktorym
     // rebalans sie odbyl - bez tego kazdy cykl przez cala godzine spamowal.
-    lastEnsembleRebalance: 0
+    lastEnsembleRebalance: 0,
+    journal: []
   };
 }
 
@@ -2137,4 +2658,30 @@ function fmtPrice(p) {
   if (p >= 1000) return p.toFixed(1);
   if (p >= 1)    return p.toFixed(4);
   if (p >= 0.01) return p.toFixed(6);
-  return p.to
+  return p.toFixed(8);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization'
+  };
+}
+
+function jsonResp(data, status=200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...corsHeaders() }
+  });
+}
+
+function redirectHTML(msg) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="2;url=/">
+<style>body{background:#020810;color:#00e5a0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-size:1.4em;flex-direction:column;gap:12px;}</style>
+</head><body><div>${msg}</div><div style="color:#334d74;font-size:0.5em">Przekierowanie za 2 sekundy...</div></body></html>`;
+}
