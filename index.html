@@ -501,6 +501,7 @@ tr:hover td{background:rgba(123,97,255,.04);}
     <button class="tab-btn" onclick="switchTab('history',this)">Historia</button>
     <button class="tab-btn" onclick="switchTab('stats',this)">Statystyki</button>
     <button class="tab-btn" onclick="switchTab('market',this)">Rynek</button>
+    <button class="tab-btn" onclick="switchTab('journal',this)">&#128209; Dziennik</button>
     <button class="tab-btn" onclick="switchTab('orders',this)">&#128203; Zlecenia RX</button>
     <button class="tab-btn" onclick="switchTab('backtest',this)" style="color:var(--purple)">🔬 Backtest</button>
     <button class="tab-btn" onclick="switchTab('ml',this)" style="color:var(--gold)">🧠 ML Wagi</button>
@@ -619,6 +620,17 @@ tr:hover td{background:rgba(123,97,255,.04);}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;" id="market-cards">
         <div style="color:var(--text3);text-align:center;padding:30px;grid-column:1/-1">Uruchom bota aby załadować dane rynkowe</div>
       </div>
+    </div>
+
+    <!-- DZIENNIK -->
+    <div id="tab-journal" class="tab-pane" style="padding:12px;overflow-y:auto;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <div class="sec-t" style="margin:0">&#128209; Dziennik bota (auto-wypelniany)</div>
+        <button onclick="renderJournalPanel()" style="padding:3px 10px;font-size:8pt">&#128260; Odswiez</button>
+        <button onclick="exportJournalText()" style="padding:3px 10px;font-size:8pt">&#128190; Eksport .txt</button>
+      </div>
+      <div style="font-size:8pt;color:var(--text3);margin-bottom:10px">Wpisy z kazdego skanu (kontekst rynku, sygnaly, blokady), kazdego otwarcia LONG/SHORT (uzasadnienie + wynik filtra KONTEKST/SETUP/TRIGGER) i kazdego zamkniecia (post-mortem). Dziala tylko lokalnie w tym silniku PAPER przegladarki.</div>
+      <div id="journal-list"></div>
     </div>
 
     <!-- ZLECENIA REVOLUT X -->
@@ -916,7 +928,8 @@ let ST = {
   // Symulacja SHORT — TYLKO paper/statystyki. Revolut X nie obsluguje shortow,
   // wiec to nigdy nie idzie do execBuy/execSell/realnego API — czysto informacyjne,
   // zeby sprawdzic jak skuteczny bylby bot, gdyby mogl tez shortowac.
-  shortPositions:[], shortTrades:[]
+  shortPositions:[], shortTrades:[],
+  journal:[]
 };
 let running=false, botTimer=null, nextScanAt=0, lastSigs=[], lastSignalData=null, cycleRunning=false, countdownTimer=null, cycleTimeoutTimer=null, wsExitQueueTimer=null;
 
@@ -1096,6 +1109,16 @@ async function btcDropGuard() {
     if (pct < -5) { log('⛔ BTC spada '+pct.toFixed(2)+'%','warn'); return true; }
   } catch(e) {}
   return false;
+}
+// Symetryczny guard dla SHORT (analogicznie do btcDropGuard dla LONG) + numeryczna
+// zmiana 24h do dziennika. Ta sama logika co btcInfo w worker.js.
+async function btcGuardInfo() {
+  try {
+    const t = await getTicker('BTC_USDC');
+    const pct = +t.priceChangePercent;
+    if (pct > 5) log('⛔ BTC rośnie +'+pct.toFixed(2)+'% — blokada nowych SHORT na altach', 'warn');
+    return { drop: pct < -5, pump: pct > 5, change24h: isFinite(pct) ? pct : 0 };
+  } catch(e) { return { drop: false, pump: false, change24h: 0 }; }
 }
 
 // USUNIETO: martwy kod bezposredniej (poza Workerem), sygnowanej egzekucji
@@ -1367,6 +1390,82 @@ function premiumDiscountZone(h, l, c, lookback) {
   return { zone: pct<0.5?'discount':'premium', pct, rangeHigh:hh, rangeLow:ll };
 }
 
+// ── FILTR KONTEKST(1H) → SETUP(15m) → TRIGGER(5m) ──────────────────
+// Dodatkowy twardy gate NA scoringu/SMC powyzej (nie zastepuje go). Identyczna
+// logika jak buildContextGate/buildSetupGate/buildTriggerGate w worker.js.
+// dir = 'LONG'|'SHORT'.
+function buildContextGate(trendD, dir) {
+  if (dir === 'LONG') {
+    if (trendD >= 1) return { pass: true, reason: null };
+    return { pass: false, reason: 'KONTEKST 1H: brak wyraznego trendu bull (trendD=' + trendD + ')' };
+  }
+  if (trendD <= -1) return { pass: true, reason: null };
+  return { pass: false, reason: 'KONTEKST 1H: brak wyraznego trendu bear (trendD=' + trendD + ')' };
+}
+
+function buildSetupGate(tf, dir) {
+  const price = tf.c[tf.c.length-1];
+  const ema20v = ema(tf.c, 20);
+  const ema50v = ema(tf.c, 50);
+  const rsiTf  = rsi(tf.c, 14);
+  const distEma20 = Math.abs(price/ema20v - 1) * 100;
+  const distEma50 = Math.abs(price/ema50v - 1) * 100;
+  const nearEma = distEma20 < 1.2 || distEma50 < 1.5;
+
+  if (dir === 'LONG') {
+    const rsiOk      = rsiTf >= 35 && rsiTf <= 58;
+    const notOverext = price <= ema20v * 1.03;
+    if (nearEma && rsiOk && notOverext) return { pass: true, reason: null, rsi: rsiTf };
+    const reason = !nearEma ? 'SETUP 15m: cena za daleko od EMA20/50 — brak pullbacku'
+      : !rsiOk ? 'SETUP 15m: RSI ' + rsiTf.toFixed(0) + ' poza zdrowa strefa korekty'
+      : 'SETUP 15m: cena zbyt rozciagnieta nad EMA20';
+    return { pass: false, reason, rsi: rsiTf };
+  }
+
+  const rsiOk      = rsiTf <= 65 && rsiTf >= 42;
+  const notOverext = price >= ema20v * 0.97;
+  if (nearEma && rsiOk && notOverext) return { pass: true, reason: null, rsi: rsiTf };
+  const reason = !nearEma ? 'SETUP 15m: cena za daleko od EMA20/50 — brak odbicia'
+    : !rsiOk ? 'SETUP 15m: RSI ' + rsiTf.toFixed(0) + ' poza zdrowa strefa odbicia'
+    : 'SETUP 15m: cena zbyt rozciagnieta pod EMA20';
+  return { pass: false, reason, rsi: rsiTf };
+}
+
+function buildTriggerGate(tf, dir) {
+  const n = tf.c.length;
+  const o = tf.o[n-1], h = tf.h[n-1], l = tf.l[n-1], c = tf.c[n-1];
+  const vSum = tf.v.slice(-20).reduce(function(a,b){return a+b;}, 0);
+  const volXR = vSum > 0 ? tf.v[tf.v.length-1] / (vSum/20) : 1;
+  const goodVolume = volXR >= 1.15;
+  const macdTf = macd(tf.c);
+  const rsiTf  = rsi(tf.c, 14);
+  const body   = Math.abs(c - o);
+
+  if (dir === 'LONG') {
+    const bullish = c > o;
+    const upperWick = h - Math.max(o, c);
+    const okWick = upperWick < body * 0.9 + 1e-9;
+    const momentum = macdTf.hist > 0 || rsiTf > 45;
+    if (bullish && goodVolume && momentum && okWick) return { pass: true, reason: null, volXR };
+    const reason = !bullish ? 'TRIGGER 5m: ostatnia swieca spadkowa — brak triggera'
+      : !goodVolume ? 'TRIGGER 5m: wolumen za niski (' + volXR.toFixed(2) + 'x)'
+      : !momentum ? 'TRIGGER 5m: momentum nie potwierdza (RSI ' + rsiTf.toFixed(0) + ')'
+      : 'TRIGGER 5m: za duzy gorny knot — odrzucenie wzrostu';
+    return { pass: false, reason, volXR };
+  }
+
+  const bearish = c < o;
+  const lowerWick = Math.min(o, c) - l;
+  const okWick = lowerWick < body * 0.9 + 1e-9;
+  const momentum = macdTf.hist < 0 || rsiTf < 55;
+  if (bearish && goodVolume && momentum && okWick) return { pass: true, reason: null, volXR };
+  const reason = !bearish ? 'TRIGGER 5m: ostatnia swieca wzrostowa — brak triggera'
+    : !goodVolume ? 'TRIGGER 5m: wolumen za niski (' + volXR.toFixed(2) + 'x)'
+    : !momentum ? 'TRIGGER 5m: momentum nie potwierdza (RSI ' + rsiTf.toFixed(0) + ')'
+    : 'TRIGGER 5m: za duzy dolny knot — odrzucenie spadku';
+  return { pass: false, reason, volXR };
+}
+
 async function analyzeSwing(sym) {
   // DAY TRADING: interwaly intraday (1H/15min/5min) zamiast starych swingowych
   // (1d/4h/1h) - zgodnie z tym co liczy worker.js.
@@ -1586,7 +1685,7 @@ async function analyzeSwing(sym) {
 
   // bearBias byl wczesniej tylko odpisem punktowym (-30) - latwym do przebicia
   // innymi bonusami. Teraz to twarda blokada wejscia. Ta sama poprawka co w worker.js.
-  const buy = finalProb >= effectiveMinScore/100 && confluence >= 2 && !bearBias;
+  const scoreBuy = finalProb >= effectiveMinScore/100 && confluence >= 2 && !bearBias;
 
   // ── Poziomy TP/SL/R:R (dynamiczne, ATR, per-para override) + sygnal SHORT informacyjny ─
   const levels = calcDynamicLevels(price, atrD, FEE, pairP);
@@ -1601,7 +1700,28 @@ async function analyzeSwing(sym) {
     (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || nearBearOB || (liqSweep && liqSweep.type === 'bearish')),
     (volR > 1.3 || vol4R > 1.3)
   ].filter(Boolean).length;
-  const shortSignal = finalProb <= (1 - effectiveMinScore/100) && bearConfluence >= 2 && !bullBias;
+  const scoreShort = finalProb <= (1 - effectiveMinScore/100) && bearConfluence >= 2 && !bullBias;
+
+  // Dodatkowy twardy filtr timingu (patrz komentarz nad buildContextGate wyzej) -
+  // nakladamy sie NA scoreBuy/scoreShort, nie zastepujemy scoringu.
+  const ctxLong     = buildContextGate(trendD, 'LONG');
+  const setupLong   = ctxLong.pass   ? buildSetupGate(h4, 'LONG')   : { pass:false, reason:null };
+  const triggerLong = (ctxLong.pass && setupLong.pass) ? buildTriggerGate(h1, 'LONG') : { pass:false, reason:null };
+  const stagedLong  = ctxLong.pass && setupLong.pass && triggerLong.pass;
+  if (scoreBuy && !stagedLong) {
+    why.push((!ctxLong.pass ? ctxLong.reason : !setupLong.pass ? setupLong.reason : triggerLong.reason) || 'Filtr KONTEKST/SETUP/TRIGGER: odrzucone');
+  }
+
+  const ctxShort     = buildContextGate(trendD, 'SHORT');
+  const setupShort   = ctxShort.pass   ? buildSetupGate(h4, 'SHORT')   : { pass:false, reason:null };
+  const triggerShort = (ctxShort.pass && setupShort.pass) ? buildTriggerGate(h1, 'SHORT') : { pass:false, reason:null };
+  const stagedShort  = ctxShort.pass && setupShort.pass && triggerShort.pass;
+  if (scoreShort && !stagedShort) {
+    why.push((!ctxShort.pass ? ctxShort.reason : !setupShort.pass ? setupShort.reason : triggerShort.reason) || 'Filtr KONTEKST/SETUP/TRIGGER: odrzucone');
+  }
+
+  const buy         = scoreBuy && stagedLong;
+  const shortSignal = scoreShort && stagedShort;
   const shortLevels = shortSignal ? {
     tp: price * (1 - Math.max(CFG.tp, atrD/price*2.5)),
     sl: price * (1 + Math.max(CFG.sl, atrD/price*1.5)),
@@ -1615,6 +1735,9 @@ async function analyzeSwing(sym) {
     bbPos:bbD.pos, bbUpper:bbD.upper, bbLower:bbD.lower,
     trendD, ema20, ema50, atrD,
     score, finalProb:+finalProb.toFixed(3), buy, shortSignal, shortLevels, levels,
+    scoreBuy, scoreShort,
+    gates: { ctxLong: ctxLong.pass, setupLong: setupLong.pass, triggerLong: triggerLong.pass,
+             ctxShort: ctxShort.pass, setupShort: setupShort.pass, triggerShort: triggerShort.pass },
     nbPred, gbmProb:+gbmProb.toFixed(3), qlSugg, aiMethod,
     obiRatio:obiData.ratio, obiScore, obiLabel:OBI.label(obiData.ratio),
     patterns:patResult.patterns, patScore,
@@ -1627,6 +1750,227 @@ async function analyzeSwing(sym) {
     divBear: divD.bear || div4h.bear,
     divLabel: divD.bull&&div4h.bull ? '1H+15min' : divD.bull ? '1H' : div4h.bull ? '15min' : ''
   };
+}
+
+// ── DZIENNIK — bot sam wypelnia (cykl / wejscie / wyjscie / post-mortem) ──
+// Identyczna logika jak w worker.js (addJournalEntry/buildCycleJournalEntry/
+// buildEntryJournalEntry/buildExitJournalEntry/analyzeThesisOutcome/...),
+// tylko trzymana w ST.journal (localStorage) zamiast KV.
+function addJournalEntry(entry) {
+  if (!ST.journal) ST.journal = [];
+  ST.journal = [entry].concat(ST.journal).slice(0, 500);
+  saveAll();
+}
+
+function fmtSignedPct(n) {
+  if (!isFinite(n)) return String(n);
+  return (n >= 0 ? '+' : '') + n.toFixed(2);
+}
+
+function describeMarketRegime(btcInfo, fg) {
+  const btc = btcInfo.change24h || 0;
+  const fgv = fg.val;
+  let tone;
+  if (btc > 2 && fgv > 55) tone = 'bycza euforia';
+  else if (btc > 1) tone = 'lekko byczo';
+  else if (btc < -2 && fgv < 40) tone = 'strach na rynku';
+  else if (btc < -1) tone = 'lekko niedzwiedzio';
+  else tone = 'neutralnie';
+  const fgLabel = fgv < 25 ? 'strach' : fgv < 45 ? 'ostroznosc' : fgv < 55 ? 'neutralnie' : fgv < 75 ? 'chciwosc' : 'euforia';
+  return tone + ' (BTC 24h ' + fmtSignedPct(btc) + '%, F&G ' + fgv + ' — ' + fgLabel + ')';
+}
+
+function describeExitReason(reason) {
+  const map = {
+    'TAKE PROFIT': 'Take Profit — cel osiagniety',
+    'STOP LOSS': 'Stop Loss — struktura zepsuta',
+    'TRAILING STOP': 'Trailing Stop — cena sie odwrocila',
+    'EMERGENCY STOP': 'Emergency Stop — awaryjne zamkniecie',
+    'TIMEOUT 8h': 'Timeout — brak potwierdzenia w 8h',
+    'PARTIAL TP': 'Partial Take Profit'
+  };
+  return map[reason] || reason;
+}
+
+function analyzeThesisOutcome(pos, exitPrice, reason, isShort) {
+  const notes = [];
+  let verdict = '';
+  const wasProfit = isShort ? exitPrice < pos.entry : exitPrice > pos.entry;
+  const tpReached = isShort ? exitPrice <= pos.tp : exitPrice >= pos.tp;
+
+  if (reason === 'TAKE PROFIT' || tpReached) {
+    verdict = 'Teza zrealizowana w pelni — cena doszla do celu.';
+    notes.push('Cel osiagniety zgodnie z planem, wykonanie bez uwag.');
+  } else if (reason === 'TRAILING STOP' && wasProfit) {
+    const totalMove = Math.abs(pos.tp - pos.entry);
+    const gotMove   = Math.abs(exitPrice - pos.entry);
+    const pctOfTarget = totalMove > 0 ? (gotMove / totalMove * 100).toFixed(0) : '0';
+    verdict = 'Teza zrealizowana czesciowo — trailing zabezpieczyl ' + pctOfTarget + '% drogi do celu.';
+    if (pctOfTarget >= 80) notes.push('Trailing zadzialal prawidlowo — cena sie odwrocila, ochrona zadzialala.');
+    else if (pctOfTarget >= 50) notes.push('Trailing zamknal pozycje w polowie drogi — mozna rozwazyc szerszy trailing.');
+    else notes.push('Trailing zamknal za wczesnie — cena nie miala miejsca na oddech.');
+  } else if (reason === 'STOP LOSS' || reason === 'TIMEOUT 8h' || reason === 'EMERGENCY STOP') {
+    verdict = 'Teza nie zrealizowala sie — cena poszla w druga strone.';
+    notes.push('Setup nie zadzialal — to czesc procesu, nie kazdy trade wygrywa.');
+    if (reason === 'TIMEOUT 8h') notes.push('Pozycja stala w miejscu — brak momentum w oknie 8h.');
+    else if (reason === 'EMERGENCY STOP') notes.push('Ruch przeciwny byl gwaltowny — rozwaz mniejszy rozmiar na tej parze.');
+    else notes.push('Stop zadzialal zgodnie z planem — strata pod kontrola.');
+  } else {
+    verdict = 'Zamkniete z powodu: ' + reason;
+  }
+  return { verdict, notes };
+}
+
+function buildEntryJournalEntry(sig, pos, dir) {
+  const now = new Date();
+  const isShort = dir === 'SHORT';
+  const sym = pos.sym.replace('USDC','');
+  const lines = [];
+
+  lines.push((isShort ? '⚡ OTWARCIE SHORT (PAPER, symulacja): ' : '⚡ OTWARCIE LONG: ') + sym);
+  lines.push('Czas: ' + now.toISOString().replace('T',' ').slice(0,19) + ' UTC');
+  lines.push('Cena wejscia: $' + fp(pos.entry));
+  lines.push('Rozmiar: $' + (pos.size||0).toFixed(2));
+  lines.push('Take Profit: $' + fp(pos.tp) + ' | Stop Loss: $' + fp(pos.sl));
+  lines.push('Score: ' + pos.score + '/100 | Pewnosc: ' + ((pos.finalProb||0)*100).toFixed(1) + '%');
+  lines.push('');
+  lines.push('POWODY WEJSCIA:');
+  (sig.why || []).slice(0, 8).forEach(function(w){ lines.push('  • ' + w); });
+  lines.push('');
+  lines.push('FILTR KONTEKST/SETUP/TRIGGER:');
+  const g = sig.gates || {};
+  if (isShort) {
+    lines.push('  • KONTEKST 1H: ' + (g.ctxShort ? 'OK (trend bear)' : 'brak'));
+    lines.push('  • SETUP 15m: ' + (g.setupShort ? 'OK (odbicie do EMA)' : 'brak'));
+    lines.push('  • TRIGGER 5m: ' + (g.triggerShort ? 'OK (swieca spadkowa + wolumen)' : 'brak'));
+  } else {
+    lines.push('  • KONTEKST 1H: ' + (g.ctxLong ? 'OK (trend bull)' : 'brak'));
+    lines.push('  • SETUP 15m: ' + (g.setupLong ? 'OK (pullback do EMA)' : 'brak'));
+    lines.push('  • TRIGGER 5m: ' + (g.triggerLong ? 'OK (swieca wzrostowa + wolumen)' : 'brak'));
+  }
+
+  return {
+    ts: now.getTime(), tsISO: now.toISOString(), type: 'entry',
+    sym: pos.sym, side: dir, entry: pos.entry, tp: pos.tp, sl: pos.sl,
+    size: pos.size, mode: isShort ? 'paper (short, sym.)' : CFG.mode,
+    title: (isShort ? 'OTWARCIE SHORT (sym.) ' : 'OTWARCIE LONG ') + sym + ' @ $' + fp(pos.entry),
+    summary: 'Score ' + pos.score + '/100, ' + (pos.aiMethod||sig.aiMethod||''),
+    lines, severity: 'entry'
+  };
+}
+
+function buildExitJournalEntry(pos, closeInfo, dir) {
+  const now = new Date();
+  const isShort = dir === 'SHORT';
+  const sym = pos.sym.replace('USDC','');
+  const exitPrice = closeInfo.exitPrice, pnl = closeInfo.pnl, pnlPct = closeInfo.pnlPct,
+        reason = closeInfo.reason, durH = closeInfo.durH;
+  const lines = [];
+
+  const emoji = pnl >= 0 ? '✓' : '✗';
+  lines.push(emoji + ' ZAMKNIECIE ' + (isShort ? 'SHORT (sym.)' : 'LONG') + ': ' + sym);
+  lines.push('Czas: ' + now.toISOString().replace('T',' ').slice(0,19) + ' UTC');
+  lines.push('Powod: ' + describeExitReason(reason));
+  lines.push('Cena wejscia: $' + fp(pos.entry) + ' → wyjscia: $' + fp(exitPrice));
+  lines.push('Wynik: ' + fmtSignedPct(pnl) + '$ (' + fmtSignedPct(pnlPct) + '%)');
+  lines.push('Czas trwania: ' + durH + 'h');
+  lines.push('');
+  lines.push('POST-MORTEM:');
+  const thesis = analyzeThesisOutcome(pos, exitPrice, reason, isShort);
+  lines.push('  • ' + thesis.verdict);
+  thesis.notes.forEach(function(n){ lines.push('  • ' + n); });
+
+  return {
+    ts: now.getTime(), tsISO: now.toISOString(), type: 'exit',
+    sym: pos.sym, side: dir, entry: pos.entry, exit: exitPrice,
+    pnl, pnlPct, reason, durH,
+    title: emoji + ' ZAMKNIECIE ' + (isShort?'SHORT ':'LONG ') + sym + ' ' + fmtSignedPct(pnlPct) + '%',
+    summary: describeExitReason(reason),
+    lines, severity: pnl >= 0 ? 'ok' : 'err'
+  };
+}
+
+function buildCycleJournalEntry(data) {
+  const iter = data.iter, fg = data.fg, btcInfo = data.btcInfo, sigs = data.sigs,
+        positions = data.positions || [], shortPositions = data.shortPositions || [],
+        balance = data.balance || 0, dailyPnl = data.dailyPnl || 0, blockReason = data.blockReason;
+  const now = new Date();
+  const lines = [];
+
+  lines.push('Rezim rynku: ' + describeMarketRegime(btcInfo, fg));
+  lines.push('Kapital (paper): $' + balance.toFixed(2) + ' | P&L dzis: ' + fmtSignedPct(dailyPnl) + '$');
+  if (blockReason) lines.push('⛔ BLOKADA WEJSC: ' + blockReason);
+
+  if (positions.length > 0 || shortPositions.length > 0) {
+    lines.push('');
+    lines.push('Otwarte pozycje (' + positions.length + ' LONG, ' + shortPositions.length + ' SHORT sym.):');
+    positions.forEach(function(p){
+      const pnlPct = p.cp ? ((p.cp - p.entry) / p.entry * 100) : 0;
+      lines.push('  • [LONG] ' + p.sym.replace('USDC','') + ' @ ' + fp(p.entry) + ' (PnL: ' + fmtSignedPct(pnlPct) + '%)');
+    });
+    shortPositions.forEach(function(p){
+      const pnlPct = p.cp ? ((p.entry - p.cp) / p.entry * 100) : 0;
+      lines.push('  • [SHORT sym.] ' + p.sym.replace('USDC','') + ' @ ' + fp(p.entry) + ' (PnL: ' + fmtSignedPct(pnlPct) + '%)');
+    });
+  }
+
+  const passedGate = (sigs||[]).filter(function(s){ return s.buy || s.shortSignal; });
+  if (passedGate.length > 0) {
+    lines.push('');
+    lines.push('Sygnaly, ktore przeszly score+SMC+KONTEKST/SETUP/TRIGGER:');
+    passedGate.forEach(function(s){
+      lines.push('  • ' + s.sym.replace('USDC','') + ': ' + (s.buy?'LONG':'SHORT(sym.)') + ' — score ' + s.score + '/100');
+    });
+  }
+
+  const nearMiss = (sigs||[]).filter(function(s){ return (s.scoreBuy && !s.buy) || (s.scoreShort && !s.shortSignal); });
+  if (nearMiss.length > 0) {
+    lines.push('');
+    lines.push('Wysoki score, ale odrzucone przez filtr KONTEKST/SETUP/TRIGGER:');
+    nearMiss.slice(0,5).forEach(function(s){
+      const reasonLine = (s.why||[]).find(function(w){ return w.indexOf('KONTEKST')===0 || w.indexOf('SETUP')===0 || w.indexOf('TRIGGER')===0; });
+      lines.push('  • ' + s.sym.replace('USDC','') + ': ' + (reasonLine || 'filtr timing odrzucil'));
+    });
+  }
+
+  if (!sigs || sigs.length === 0) { lines.push(''); lines.push('Brak danych z rynku w tym cyklu.'); }
+
+  return {
+    ts: now.getTime(), tsISO: now.toISOString(), type: 'cycle', iter,
+    title: 'Skan #' + iter,
+    summary: describeMarketRegime(btcInfo, fg),
+    lines, severity: blockReason ? 'warn' : 'info'
+  };
+}
+
+function formatJournalForText(entry) {
+  const header = '═══ ' + (entry.title || entry.type.toUpperCase()) + ' — ' + (entry.tsISO || '').slice(0,16).replace('T',' ') + ' ═══';
+  return header + '\n' + entry.lines.join('\n');
+}
+
+function renderJournalPanel() {
+  const el = gi('journal-list');
+  if (!el) return;
+  const entries = (ST.journal || []).slice(0, 100);
+  if (!entries.length) { el.innerHTML = '<div style="color:var(--text3);text-align:center;padding:30px">Dziennik jest pusty — uruchom bota (PAPER), żeby zaczął sam się wypełniać.</div>'; return; }
+  el.innerHTML = entries.map(function(e){
+    const c = e.severity==='ok' ? 'up' : e.severity==='err' ? 'dn' : e.severity==='entry' ? 'gold' : e.severity==='warn' ? 'gold' : 'neu';
+    const time = (e.tsISO||'').replace('T',' ').slice(0,19);
+    return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:8.5pt">'
+      + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><b class="'+c+'">'+(e.title||'')+'</b><span style="color:var(--text3);font-size:7.5pt">'+time+'</span></div>'
+      + '<div style="color:var(--text2);white-space:pre-wrap;line-height:1.5">'+(e.lines||[]).join('\n')+'</div>'
+      + '</div>';
+  }).join('');
+}
+
+function exportJournalText() {
+  const text = (ST.journal||[]).map(formatJournalForText).join('\n\n');
+  const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'swingai_dziennik.txt';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── AI EXPLAINER ───────────────────────────────────────────────────
@@ -2065,13 +2409,16 @@ function openShortPaper(sig) {
   if (isDeadHour()) return;
   if (corrBlocked(sig.sym)) return;
   if (!sig.shortLevels) return;
-  ST.shortPositions.push({
+  const newShortPos = {
     sym: sig.sym, entry: sig.price, sl: sig.shortLevels.sl, tp: sig.shortLevels.tp,
+    trailDist: sig.shortLevels.trail || CFG.trail,
     lowP: sig.price, entryTs: Date.now(), score: sig.score, finalProb: sig.finalProb,
     why: sig.why.join(', '), size: CFG.posSize
-  });
+  };
+  ST.shortPositions.push(newShortPos);
   saveAll();
   log('SHORT (symulacja) '+sig.sym+' @ '+fp(sig.price)+' TP='+fp(sig.shortLevels.tp)+' SL='+fp(sig.shortLevels.sl), 'info');
+  addJournalEntry(buildEntryJournalEntry(sig, newShortPos, 'SHORT'));
   renderShortPositions();
 }
 
@@ -2091,6 +2438,7 @@ async function closeShortPaper(pos, price, reason) {
   if (ST.shortTrades.length > 300) ST.shortTrades = ST.shortTrades.slice(0, 300);
   saveAll();
   log('Zamknieto SHORT (symulacja) '+pos.sym+' — '+reason+' | P/L: '+(pnl>=0?'+':'')+'$'+pnl.toFixed(2)+' ('+pnlPct.toFixed(2)+'%)', pnl>=0?'ok':'warn');
+  addJournalEntry(buildExitJournalEntry(pos, { exitPrice: price, pnl, pnlPct, reason, durH }, 'SHORT'));
   renderShortPositions(); renderHistory(); renderStats();
 }
 
@@ -2104,11 +2452,39 @@ async function checkShortPositions() {
       }
       if (cp < (pos.lowP||pos.entry)) pos.lowP = cp;
       const pnlPct = (pos.entry-cp)/pos.entry*100;
+      // Trailing stop odwrocony wzgledem LONG (od lowP, cena musi WZROSNAC do
+      // trail zeby wybic stop) - ta sama logika co SHORT branch w worker.js.
+      const trailDist = pos.trailDist || CFG.trail;
+      const trail = pos.lowP * (1 + trailDist);
       let reason = null;
-      if      (cp >= pos.sl)                         reason = 'STOP LOSS';
-      else if (cp <= pos.tp)                         reason = 'TAKE PROFIT';
-      else if (pnlPct <= -12)                        reason = 'EMERGENCY STOP';
-      else if ((Date.now()-pos.entryTs) > 8*3600000) reason = 'TIMEOUT 8h';
+      if      (cp >= pos.sl)                          reason = 'STOP LOSS';
+      else if (cp <= pos.tp)                          reason = 'TAKE PROFIT';
+      else if (cp >= trail && pnlPct > 1.5)           reason = 'TRAILING STOP';
+      else if (pnlPct <= -12)                         reason = 'EMERGENCY STOP';
+      else if ((Date.now()-pos.entryTs) > 8*3600000)  reason = 'TIMEOUT 8h';
+
+      // Partial TP (50% pozycji w polowie drogi do TP) - symetria z LONG w checkPositions().
+      if (!reason && !pos.partialClosed) {
+        const tpPct = (pos.entry - pos.tp) / pos.entry * 100;
+        if (pnlPct >= tpPct * 0.5) {
+          const halfSize = (pos.size || 0) / 2;
+          const grossPnl = halfSize * pnlPct/100;
+          const feeCost  = halfSize*FEE + (halfSize+grossPnl)*FEE;
+          const halfPnl  = grossPnl - feeCost;
+          pos.size = halfSize;
+          pos.partialClosed = true;
+          pos.sl = pos.entry; // break-even stop
+          if (CFG.mode === 'paper') ST.paperBal = (ST.paperBal||0) + halfPnl;
+          ST.dailyPnl = (ST.dailyPnl||0) + halfPnl;
+          ST.shortTrades.unshift({sym:pos.sym, entry:pos.entry, exit:cp, size:halfSize,
+            pnl:+halfPnl.toFixed(4), pnlPct:+(halfPnl/halfSize*100).toFixed(2),
+            durH:((Date.now()-pos.entryTs)/3600000).toFixed(1), reason:'PARTIAL TP',
+            score:pos.score, finalProb:pos.finalProb, ts:Date.now()});
+          log('PARTIAL TP SHORT(sym.) '+pos.sym+' +$'+halfPnl.toFixed(2)+' ('+pnlPct.toFixed(1)+'%) — reszta jedzie dalej', 'ok');
+          saveAll();
+        }
+      }
+
       if (reason) { await closeShortPaper(pos, cp, reason); }
       else { pos.cp = cp; saveAll(); }
     } catch(e) { log('checkShortPos '+pos.sym+': '+e.message, 'err'); }
@@ -2214,6 +2590,7 @@ async function closeTrade(pos, price, reason) {
     // Zaktualizuj statystyki
     ST.stats = calcStats(ST.trades);
     saveAll();
+    addJournalEntry(buildExitJournalEntry(pos, { exitPrice: ep, pnl, pnlPct, reason, durH }, 'LONG'));
     const e2 = pnl>=0 ? '🟢' : '🔴';
     log(e2+' '+pos.sym+' P/L: '+(pnl>=0?'+':'')+'$'+pnl.toFixed(2)+' ('+pnlPct.toFixed(2)+'%) — '+reason, pnl>=0?'ok':'err');
     toast(reason+' '+pos.sym.replace('USDC','/USDC'), (pnl>=0?'+':'')+'$'+pnl.toFixed(2)+' ('+pnlPct.toFixed(2)+'%) | '+durH+'h', pnl>=0?'ok':'err', 6000);
@@ -2294,7 +2671,7 @@ async function openTrade(sig, fg, btcDrop, cachedTotal, cachedUSDC) {
     const execP = res.price || sig.price;
     // Przelicz poziomy na cenie wykonania
     const execLevels = calcDynamicLevels(execP, sig.atrD, FEE, pairP);
-    ST.positions.push({sym:sig.sym, entry:execP, qty:res.qty,
+    const newLongPos = {sym:sig.sym, entry:execP, qty:res.qty,
       cp:execP, sl:execLevels.sl, tp:execLevels.tp,
       trailDist:execLevels.trail,
       highP:execP, entryTs:Date.now(), score:sig.score,
@@ -2305,8 +2682,10 @@ async function openTrade(sig, fg, btcDrop, cachedTotal, cachedUSDC) {
       nbPredLabel: sig.nbPred ? sig.nbPred.label : null,
       qlSuggAction: sig.qlSugg ? sig.qlSugg.action : null,
       why:sig.why.join(', '), size:posSize,
-      rr:execLevels.rr, atrPct:execLevels.atrPct});
+      rr:execLevels.rr, atrPct:execLevels.atrPct};
+    ST.positions.push(newLongPos);
     saveAll();
+    addJournalEntry(buildEntryJournalEntry(sig, newLongPos, 'LONG'));
     log('Otwarto '+sig.sym+' '+((res.qty||0).toFixed(6))+' @ '+fp(execP)+' | R:R='+execLevels.rr,'ok');
     toast('BUY ' + sig.sym.replace('USDC','/USDC'), fp(execP)+' | Kelly $'+posSize.toFixed(2)+' | R:R '+execLevels.rr+':1', 'buy', 5000);
     alertPositionOpen(sig.sym.replace('USDC','/USDC'), 'LONG');
@@ -2380,9 +2759,12 @@ async function botCycle() {
   }
 
   const fg      = await getFearGreed();
-  const btcDrop = await btcDropGuard();
+  const btcInfo = await btcGuardInfo();
+  const btcDrop = btcInfo.drop;
   gi('rb-fg').textContent = fg.val+' — '+fg.label;
   gi('rb-fg').className   = 'val '+(fg.val<25?'dn':fg.val<40?'gold':'up');
+
+  var _blockReason = null;
 
   if (ST.globalBlockUntil <= Date.now() && !(ST.drawdownBlock > Date.now())) {
     // Pobierz balans raz przed pętlą — unikamy N zapytań API przy N sygnałach BUY
@@ -2399,10 +2781,20 @@ async function botCycle() {
       for (let i=0; i<sigs.length; i++) {
         if (!sigs[i].shortSignal) continue;
         if (ST.shortPositions.length >= CFG.maxPos) break;
+        if (btcInfo.pump && sigs[i].sym !== 'BTC_USDC') continue;
         openShortPaper(sigs[i]);
       }
     }
+  } else {
+    _blockReason = (ST.drawdownBlock > Date.now()) ? 'circuit breaker' : 'globalna blokada (straty z rzedu)';
   }
+
+  addJournalEntry(buildCycleJournalEntry({
+    iter: ST.iter, fg, btcInfo, sigs,
+    positions: ST.positions, shortPositions: ST.shortPositions,
+    balance: CFG.mode==='paper' ? ST.paperBal : 0, dailyPnl: ST.dailyPnl,
+    blockReason: _blockReason
+  }));
 
   renderMarketTab(sigs);
   await updateHeader();
@@ -2934,9 +3326,10 @@ function renderCooldowns() {
 function switchTab(v, btn) {
   document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('on'); });
   if (btn) btn.classList.add('on');
-  ['positions','chart','history','stats','market','orders','backtest','ml'].forEach(function(t){ gi('tab-'+t).className='tab-pane'+(t===v?' on':''); });
+  ['positions','chart','history','stats','market','journal','orders','backtest','ml'].forEach(function(t){ gi('tab-'+t).className='tab-pane'+(t===v?' on':''); });
   if (v==='stats') setTimeout(drawEquity,50);
   if (v==='chart') setTimeout(function(){ INLINE_CHART.load(); }, 80);
+  if (v==='journal') setTimeout(renderJournalPanel,20);
 }
 
 // ── SETTINGS ───────────────────────────────────────────────────────
