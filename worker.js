@@ -534,7 +534,7 @@ async function runBotCycle(env) {
       addLog(state, 'GBM walk-forward refit: ' + Math.min(trades.length,200) + ' tradów, OOS=' + gbm.accuracyOOS + '%', 'ok');
     }
 
-    // FIX: Ensemble rebalance rzadziej (co 40 trade'ów) + silniejsza regularyzacja
+    // FIX: Ensemble rebalance rzadziej (co 40 trade’ów) + silniejsza regularyzacja
 const milestone = Math.floor(trades.length / 40) * 40;
 if (trades.length >= 40 && milestone > (state.lastEnsembleRebalance || 0)) {
   const ewUpd = rebalanceEnsemble(ew, nb, gbm, trades.slice(0, 40));
@@ -542,9 +542,9 @@ if (trades.length >= 40 && milestone > (state.lastEnsembleRebalance || 0)) {
     Object.assign(ew, ewUpd);
     state.lastEnsembleRebalance = milestone;
     addLog(state, 'Ensemble rebalanced @' + milestone + ' tradów: nb=' + ew.nb.toFixed(2) + ' gbm=' + ew.gbm.toFixed(2), 'ok');
+  }
+}
 
-      }
-    }
 
     state.nb  = nb.save();
     state.gbm = gbm.save();
@@ -1842,7 +1842,7 @@ function kellySize(cfg, state, total, slPct) {
   const safeTotal = (isFinite(total) && total > 0) ? total : 100;
   if (isMicroAccount(safeTotal)) return Math.max(1, Math.round(safeTotal * 0.90 * 100) / 100);
   const fixedSize = cfg.posSize || 15;
-  const trades = (state.trades || []).slice(0, 40); // dłuższa historia
+  const trades = (state.trades || []).slice(0, 40);
   let sz;
   if (trades.length < 8) {
     sz = Math.min(fixedSize, Math.max(10, safeTotal * (cfg.riskPct || 2) / 100));
@@ -1863,7 +1863,7 @@ function kellySize(cfg, state, total, slPct) {
       if (kelly <= 0) {
         sz = Math.min(fixedSize, Math.max(5, safeTotal * 0.015));
       } else {
-        kelly = Math.min(0.04, kelly * 0.4); // half-Kelly + mocniejszy cap
+        kelly = Math.min(0.04, kelly * 0.4);
         sz = Math.max(5, Math.round(safeTotal * kelly * 100) / 100);
       }
     }
@@ -1877,6 +1877,7 @@ function kellySize(cfg, state, total, slPct) {
   }
   return sz;
 }
+
 
 
 const SPREAD_BUFFER_MIN     = 0.0008;
@@ -1976,7 +1977,7 @@ function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
     const matched = recentTrades.filter(matchFn);
     if (matched.length < 4) return 1;
     const avgPnlPct = matched.reduce((s, t) => s + (t.pnlPct || 0), 0) / matched.length;
-    // Silniejsza regularyzacja – mniejszy wpływ pojedynczych trade'ów
+    // Silniejsza regularyzacja
     return Math.max(0.7, Math.min(1.25, 1 + avgPnlPct / 20));
   }
 
@@ -1989,7 +1990,6 @@ function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
   if (nbTotal >= 8) {
     const nbAcc = nbCorrect / nbTotal;
     const nbExp = expectancyFactor(t => t.nbLabel === 'BUY');
-    // Shrinkage w stronę 0.8
     let raw = nbAcc * 1.6 * nbExp;
     newEw.nb = +Math.max(0.4, Math.min(1.3, 0.8 + (raw - 0.8) * 0.6)).toFixed(2);
   }
@@ -2018,6 +2018,7 @@ function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
 }
 
 
+
 function makeNB(saved) {
   const nb = {
     model: null, trained: false, trainCount: 0,
@@ -2032,12 +2033,12 @@ function makeNB(saved) {
       ];
     },
     trainFromTrades(trades) {
-      if (trades.length < 12) return false; // lekko podniesione minimum
+      if (trades.length < 12) return false;
       const bins = [4, 3, 4, 4, 4, 2];
       const nF = 6;
       const counts = { 0: {}, 1: {} };
       const cc = { 0: 0, 1: 0 };
-      // Silniejsze wygładzanie Laplace'a (start od 2 zamiast 1)
+      // Silniejsze wygładzanie Laplace’a
       [0, 1].forEach(cl => {
         for (let f = 0; f < nF; f++) for (let b = 0; b < bins[f]; b++) counts[cl][f + '_' + b] = 2;
       });
@@ -2062,7 +2063,7 @@ function makeNB(saved) {
       const bins = this.discretize(features);
       const lp = {};
       [0, 1].forEach(cl => {
-        let p = Math.log((m.cc[cl] + 2) / (m.total + 4)); // mocniejsze prior
+        let p = Math.log((m.cc[cl] + 2) / (m.total + 4));
         for (let f = 0; f < m.nF; f++) {
           const k = f + '_' + bins[f];
           const cnt = m.counts[cl][k] || 2;
@@ -2094,6 +2095,7 @@ function makeNB(saved) {
   }
   return nb;
 }
+
 
 
 function predictFromTrees(trees, lr, x) {
