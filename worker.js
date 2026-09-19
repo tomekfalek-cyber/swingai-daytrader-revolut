@@ -534,16 +534,15 @@ async function runBotCycle(env) {
       addLog(state, 'GBM walk-forward refit: ' + Math.min(trades.length,200) + ' tradów, OOS=' + gbm.accuracyOOS + '%', 'ok');
     }
 
-    // BUG FIX #1: Ensemble rebalansowal sie kazdy cykl przez cala godzine gdy
-    // trades.length = 20, 40, 60... (a cykl leci co 3 min). Teraz odpala sie
-    // RAZ na kazdy nowy prog 20 tradow, nie za kazdym skanem.
-    const milestone = Math.floor(trades.length / 20) * 20;
-    if (trades.length >= 20 && milestone > (state.lastEnsembleRebalance || 0)) {
-      const ewUpd = rebalanceEnsemble(ew, nb, gbm, trades.slice(0, 20));
-      if (ewUpd) {
-        Object.assign(ew, ewUpd);
-        state.lastEnsembleRebalance = milestone;
-        addLog(state, 'Ensemble rebalanced @' + milestone + ' tradów: nb=' + ew.nb.toFixed(2) + ' gbm=' + ew.gbm.toFixed(2), 'ok');
+    // FIX: Ensemble rebalance rzadziej (co 40 trade'ów) + silniejsza regularyzacja
+const milestone = Math.floor(trades.length / 40) * 40;
+if (trades.length >= 40 && milestone > (state.lastEnsembleRebalance || 0)) {
+  const ewUpd = rebalanceEnsemble(ew, nb, gbm, trades.slice(0, 40));
+  if (ewUpd) {
+    Object.assign(ew, ewUpd);
+    state.lastEnsembleRebalance = milestone;
+    addLog(state, 'Ensemble rebalanced @' + milestone + ' tradów: nb=' + ew.nb.toFixed(2) + ' gbm=' + ew.gbm.toFixed(2), 'ok');
+
       }
     }
 
@@ -1841,45 +1840,44 @@ function isMicroAccount(total) { return (isFinite(total) && total > 0 && total <
 
 function kellySize(cfg, state, total, slPct) {
   const safeTotal = (isFinite(total) && total > 0) ? total : 100;
-
-  if (isMicroAccount(safeTotal)) {
-    return Math.max(1, Math.round(safeTotal * 0.90 * 100) / 100);
-  }
-
+  if (isMicroAccount(safeTotal)) return Math.max(1, Math.round(safeTotal * 0.90 * 100) / 100);
   const fixedSize = cfg.posSize || 15;
-  const trades    = (state.trades || []).slice(0, 30);
+  const trades = (state.trades || []).slice(0, 40); // dłuższa historia
   let sz;
-  if (trades.length < 5) {
+  if (trades.length < 8) {
     sz = Math.min(fixedSize, Math.max(10, safeTotal * (cfg.riskPct || 2) / 100));
   } else {
-    const wins   = trades.filter(t => t.pnl > 0);
+    const wins = trades.filter(t => t.pnl > 0);
     const losses = trades.filter(t => t.pnl <= 0);
-    const p    = wins.length / trades.length;
-    const avgW = wins.length   ? wins.reduce((a,t)=>a+t.pnlPct,0)/wins.length/100   : cfg.tp;
-    const avgL = losses.length ? Math.abs(losses.reduce((a,t)=>a+t.pnlPct,0)/losses.length)/100 : cfg.sl;
-    const b    = avgW / (avgL > 0 ? avgL : cfg.sl || 0.04);
+    let p = wins.length / trades.length;
+    const avgW = wins.length ? wins.reduce((a, t) => a + t.pnlPct, 0) / wins.length / 100 : cfg.tp;
+    const avgL = losses.length ? Math.abs(losses.reduce((a, t) => a + t.pnlPct, 0) / losses.length) / 100 : cfg.sl;
+    const b = avgW / (avgL > 0 ? avgL : cfg.sl || 0.04);
     if (!isFinite(b) || b <= 0) {
-      sz = Math.min(fixedSize, Math.max(10, safeTotal * (cfg.riskPct||2)/100));
+      sz = Math.min(fixedSize, Math.max(10, safeTotal * (cfg.riskPct || 2) / 100));
     } else {
+      // Silniejszy shrinkage przy małej próbce
+      const shrinkage = Math.min(1, trades.length / 50);
+      p = 0.5 + (p - 0.5) * shrinkage;
       let kelly = (b * p - (1 - p)) / b;
       if (kelly <= 0) {
-        sz = Math.min(fixedSize, Math.max(5, safeTotal * 0.02));
+        sz = Math.min(fixedSize, Math.max(5, safeTotal * 0.015));
       } else {
-        kelly = Math.min(0.05, kelly * 0.5);
+        kelly = Math.min(0.04, kelly * 0.4); // half-Kelly + mocniejszy cap
         sz = Math.max(5, Math.round(safeTotal * kelly * 100) / 100);
       }
     }
   }
-  sz = Math.min(fixedSize, sz, safeTotal * 0.20);
-
+  sz = Math.min(fixedSize, sz, safeTotal * 0.18);
   if (isFinite(slPct) && slPct > 0) {
-    const baselineSl  = cfg.sl || 0.01;
-    const normFactor  = Math.min(1.5, Math.max(0.5, baselineSl / slPct));
+    const baselineSl = cfg.sl || 0.01;
+    const normFactor = Math.min(1.4, Math.max(0.5, baselineSl / slPct));
     sz = Math.max(5, Math.round(sz * normFactor * 100) / 100);
-    sz = Math.min(fixedSize, sz, safeTotal * 0.20);
+    sz = Math.min(fixedSize, sz, safeTotal * 0.18);
   }
   return sz;
 }
+
 
 const SPREAD_BUFFER_MIN     = 0.0008;
 const SPREAD_BUFFER_MAX     = 0.006;
@@ -1971,14 +1969,15 @@ const PATTERNS = {
 // MODUŁY AI/ML
 // ═══════════════════════════════════════════════════════════════════════════
 function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
-  if (!recentTrades || recentTrades.length < 10) return null;
+  if (!recentTrades || recentTrades.length < 15) return null;
   const newEw = { score: ew.score, nb: ew.nb, gbm: ew.gbm, obi: ew.obi, ql: ew.ql };
 
   function expectancyFactor(matchFn) {
     const matched = recentTrades.filter(matchFn);
-    if (matched.length < 3) return 1;
-    const avgPnlPct = matched.reduce((s,t) => s + (t.pnlPct||0), 0) / matched.length;
-    return Math.max(0.6, Math.min(1.4, 1 + avgPnlPct / 15));
+    if (matched.length < 4) return 1;
+    const avgPnlPct = matched.reduce((s, t) => s + (t.pnlPct || 0), 0) / matched.length;
+    // Silniejsza regularyzacja – mniejszy wpływ pojedynczych trade'ów
+    return Math.max(0.7, Math.min(1.25, 1 + avgPnlPct / 20));
   }
 
   let nbCorrect = 0, nbTotal = 0;
@@ -1987,15 +1986,18 @@ function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
     nbTotal++;
     if ((t.nbLabel === 'BUY' && t.pnl > 0) || (t.nbLabel !== 'BUY' && t.pnl <= 0)) nbCorrect++;
   });
-  if (nbTotal >= 5) {
+  if (nbTotal >= 8) {
     const nbAcc = nbCorrect / nbTotal;
     const nbExp = expectancyFactor(t => t.nbLabel === 'BUY');
-    newEw.nb = +Math.max(0.3, Math.min(1.5, nbAcc * 2 * nbExp)).toFixed(2);
+    // Shrinkage w stronę 0.8
+    let raw = nbAcc * 1.6 * nbExp;
+    newEw.nb = +Math.max(0.4, Math.min(1.3, 0.8 + (raw - 0.8) * 0.6)).toFixed(2);
   }
 
   const gbmAcc = gbm.accuracyOOS > 0 ? gbm.accuracyOOS / 100 : 0.5;
   const gbmExp = expectancyFactor(t => typeof t.gbmProb === 'number' && t.gbmProb >= 0.5);
-  newEw.gbm = +Math.max(0.3, Math.min(1.5, gbmAcc * 2 * gbmExp)).toFixed(2);
+  let rawGbm = gbmAcc * 1.6 * gbmExp;
+  newEw.gbm = +Math.max(0.4, Math.min(1.3, 0.9 + (rawGbm - 0.9) * 0.55)).toFixed(2);
 
   const SCORE_BUY_THRESHOLD = 60;
   let scoreCorrect = 0, scoreTotal = 0;
@@ -2004,82 +2006,95 @@ function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
     scoreTotal++;
     if ((t.score >= SCORE_BUY_THRESHOLD && t.pnl > 0) || (t.score < SCORE_BUY_THRESHOLD && t.pnl <= 0)) scoreCorrect++;
   });
-  if (scoreTotal >= 5) {
+  if (scoreTotal >= 8) {
     const scoreAcc = scoreCorrect / scoreTotal;
     const scoreExp = expectancyFactor(t => typeof t.score === 'number' && t.score >= SCORE_BUY_THRESHOLD);
-    newEw.score = +Math.max(0.3, Math.min(1.5, scoreAcc * 2 * scoreExp)).toFixed(2);
+    let rawScore = scoreAcc * 1.6 * scoreExp;
+    newEw.score = +Math.max(0.4, Math.min(1.3, 1.0 + (rawScore - 1.0) * 0.5)).toFixed(2);
   }
 
   newEw.obi = 0.3;
   return newEw;
 }
 
+
 function makeNB(saved) {
   const nb = {
     model: null, trained: false, trainCount: 0,
-
-    // BUG FIX #2: progi macdHist bezwymiarowe (macdHist znormalizowany przez ATR).
-    // 0.15 = 15% ATR (silny sygnal), -0.15 = silny niedzwiedzi.
     discretize(f) {
       return [
-        f.rsiD<=30?0:f.rsiD<=45?1:f.rsiD<=60?2:3,
-        f.macdHist >  0.15 ? 2 : f.macdHist > -0.15 ? 1 : 0,
-        f.bbPos<0.2?0:f.bbPos<0.5?1:f.bbPos<0.8?2:3,
-        f.trendD+1,
-        f.mom5<-5?0:f.mom5<0?1:f.mom5<5?2:3,
-        f.confirm1h?1:0
+        f.rsiD <= 30 ? 0 : f.rsiD <= 45 ? 1 : f.rsiD <= 60 ? 2 : 3,
+        f.macdHist > 0.15 ? 2 : f.macdHist > -0.15 ? 1 : 0,
+        f.bbPos < 0.2 ? 0 : f.bbPos < 0.5 ? 1 : f.bbPos < 0.8 ? 2 : 3,
+        f.trendD + 1,
+        f.mom5 < -5 ? 0 : f.mom5 < 0 ? 1 : f.mom5 < 5 ? 2 : 3,
+        f.confirm1h ? 1 : 0
       ];
     },
-
     trainFromTrades(trades) {
-      if (trades.length < 10) return false;
-      const bins = [4,3,4,4,4,2];
-      const nF   = 6;
-      const counts = { 0:{}, 1:{} };
-      const cc     = { 0:0, 1:0 };
-      [0,1].forEach(cl => {
-        for (let f=0;f<nF;f++) for (let b=0;b<bins[f];b++) counts[cl][f+'_'+b]=1;
+      if (trades.length < 12) return false; // lekko podniesione minimum
+      const bins = [4, 3, 4, 4, 4, 2];
+      const nF = 6;
+      const counts = { 0: {}, 1: {} };
+      const cc = { 0: 0, 1: 0 };
+      // Silniejsze wygładzanie Laplace'a (start od 2 zamiast 1)
+      [0, 1].forEach(cl => {
+        for (let f = 0; f < nF; f++) for (let b = 0; b < bins[f]; b++) counts[cl][f + '_' + b] = 2;
       });
       trades.forEach(t => {
         if (!t.nbFeatures) return;
         const lbl = t.pnl > 0 ? 1 : 0;
         cc[lbl]++;
-        t.nbFeatures.forEach((bin,f) => { counts[lbl][f+'_'+bin] = (counts[lbl][f+'_'+bin]||0)+1; });
+        t.nbFeatures.forEach((bin, f) => {
+          counts[lbl][f + '_' + bin] = (counts[lbl][f + '_' + bin] || 0) + 1;
+        });
       });
-      const total = cc[0]+cc[1];
-      if (total < 5) return false;
+      const total = cc[0] + cc[1];
+      if (total < 8) return false;
       this.model = { counts, cc, total, bins, nF };
-      this.trained = true; this.trainCount = total;
+      this.trained = true;
+      this.trainCount = total;
       return true;
     },
-
     predict(features) {
-      if (!this.trained || !this.model) return { prob:0.5, confidence:'low', label:'NEUTRAL' };
+      if (!this.trained || !this.model) return { prob: 0.5, confidence: 'low', label: 'NEUTRAL' };
       const m = this.model;
       const bins = this.discretize(features);
       const lp = {};
-      [0,1].forEach(cl => {
-        let p = Math.log((m.cc[cl]+1)/(m.total+2));
-        for (let f=0;f<m.nF;f++) {
-          const k = f+'_'+bins[f];
-          const cnt = m.counts[cl][k]||1;
-          const tot = Object.keys(m.counts[cl]).filter(k2=>k2.startsWith(f+'_')).reduce((s,k2)=>s+(m.counts[cl][k2]||0),0);
-          p += Math.log(cnt/Math.max(tot,1));
+      [0, 1].forEach(cl => {
+        let p = Math.log((m.cc[cl] + 2) / (m.total + 4)); // mocniejsze prior
+        for (let f = 0; f < m.nF; f++) {
+          const k = f + '_' + bins[f];
+          const cnt = m.counts[cl][k] || 2;
+          const tot = Object.keys(m.counts[cl])
+            .filter(k2 => k2.startsWith(f + '_'))
+            .reduce((s, k2) => s + (m.counts[cl][k2] || 0), 0);
+          p += Math.log(cnt / Math.max(tot, 1));
         }
         lp[cl] = p;
       });
-      const mx = Math.max(lp[0],lp[1]);
-      const e0=Math.exp(lp[0]-mx), e1=Math.exp(lp[1]-mx);
-      const prob = e1/(e0+e1);
-      const conf = prob>0.7||prob<0.3?'high':prob>0.6||prob<0.4?'medium':'low';
-      return { prob:+prob.toFixed(3), confidence:conf, label:prob>0.55?'BUY':prob<0.45?'SKIP':'NEUTRAL' };
+      const mx = Math.max(lp[0], lp[1]);
+      const e0 = Math.exp(lp[0] - mx), e1 = Math.exp(lp[1] - mx);
+      const prob = e1 / (e0 + e1);
+      const conf = prob > 0.7 || prob < 0.3 ? 'high' : prob > 0.6 || prob < 0.4 ? 'medium' : 'low';
+      return {
+        prob: +prob.toFixed(3),
+        confidence: conf,
+        label: prob > 0.55 ? 'BUY' : prob < 0.45 ? 'SKIP' : 'NEUTRAL'
+      };
     },
-
-    save() { return { model:this.model, trained:this.trained, trainCount:this.trainCount }; }
+    save() {
+      return { model: this.model, trained: this.trained, trainCount: this.trainCount };
+    }
   };
-  if (saved) { nb.model=saved.model; nb.trained=saved.trained; nb.trainCount=saved.trainCount||0; }
+  if (saved) {
+    nb.model = saved.model;
+    nb.trained = saved.trained;
+    nb.trainCount = saved.trainCount || 0;
+  }
   return nb;
 }
+
 
 function predictFromTrees(trees, lr, x) {
   let F = 0.5;
