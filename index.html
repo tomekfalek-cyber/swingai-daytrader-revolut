@@ -1408,26 +1408,43 @@ function buildSetupGate(tf, dir) {
   const ema20v = ema(tf.c, 20);
   const ema50v = ema(tf.c, 50);
   const rsiTf  = rsi(tf.c, 14);
+  const atrTf  = atr(tf.h, tf.l, tf.c, 14);
+  const atrPct = price > 0 ? (atrTf / price) * 100 : 1;
   const distEma20 = Math.abs(price/ema20v - 1) * 100;
   const distEma50 = Math.abs(price/ema50v - 1) * 100;
-  const nearEma = distEma20 < 1.2 || distEma50 < 1.5;
+  // Prog skalowany ATR-em zamiast sztywnych 1.2%/1.5% (patrz worker.js).
+  const emaTol20 = Math.min(4.0, Math.max(1.2, atrPct * 1.5));
+  const emaTol50 = Math.min(4.5, Math.max(1.5, atrPct * 1.8));
+  const nearEma = distEma20 < emaTol20 || distEma50 < emaTol50;
 
   if (dir === 'LONG') {
+    // SCIEZKA A - pullback do EMA
     const rsiOk      = rsiTf >= 35 && rsiTf <= 58;
-    const notOverext = price <= ema20v * 1.03;
-    if (nearEma && rsiOk && notOverext) return { pass: true, reason: null, rsi: rsiTf };
-    const reason = !nearEma ? 'SETUP 15m: cena za daleko od EMA20/50 — brak pullbacku'
-      : !rsiOk ? 'SETUP 15m: RSI ' + rsiTf.toFixed(0) + ' poza zdrowa strefa korekty'
-      : 'SETUP 15m: cena zbyt rozciagnieta nad EMA20';
+    const notOverext = price <= ema20v * (1 + Math.max(0.03, atrPct/100 * 2.5));
+    if (nearEma && rsiOk && notOverext) return { pass: true, reason: null, rsi: rsiTf, mode: 'pullback' };
+    // SCIEZKA B - wybicie / kontynuacja momentum
+    const stacked    = price > ema20v && ema20v > ema50v;
+    const rsiMomOk   = rsiTf >= 52 && rsiTf <= 80; // sufit 74 odcinal wiekszosc realnych trendow
+    const notBlowoff = price <= ema20v * (1 + Math.max(0.05, atrPct/100 * 4));
+    if (stacked && rsiMomOk && notBlowoff) return { pass: true, reason: null, rsi: rsiTf, mode: 'breakout' };
+    const reason = !nearEma && !stacked ? 'SETUP 15m: brak pullbacku do EMA i brak ukladu wybicia'
+      : !rsiOk && !rsiMomOk ? 'SETUP 15m: RSI ' + rsiTf.toFixed(0) + ' poza strefa korekty i poza strefa momentum'
+      : 'SETUP 15m: cena zbyt rozciagnieta nad EMA20 (blow-off)';
     return { pass: false, reason, rsi: rsiTf };
   }
 
+  // SCIEZKA A - odbicie do EMA
   const rsiOk      = rsiTf <= 65 && rsiTf >= 42;
-  const notOverext = price >= ema20v * 0.97;
-  if (nearEma && rsiOk && notOverext) return { pass: true, reason: null, rsi: rsiTf };
-  const reason = !nearEma ? 'SETUP 15m: cena za daleko od EMA20/50 — brak odbicia'
-    : !rsiOk ? 'SETUP 15m: RSI ' + rsiTf.toFixed(0) + ' poza zdrowa strefa odbicia'
-    : 'SETUP 15m: cena zbyt rozciagnieta pod EMA20';
+  const notOverext = price >= ema20v * (1 - Math.max(0.03, atrPct/100 * 2.5));
+  if (nearEma && rsiOk && notOverext) return { pass: true, reason: null, rsi: rsiTf, mode: 'pullback' };
+  // SCIEZKA B - zalamanie / kontynuacja spadku
+  const stackedDn  = price < ema20v && ema20v < ema50v;
+  const rsiMomOk2  = rsiTf >= 20 && rsiTf <= 48; // lustrzanie do sufitu 80 po stronie long
+  const notBlowoff2 = price >= ema20v * (1 - Math.max(0.05, atrPct/100 * 4));
+  if (stackedDn && rsiMomOk2 && notBlowoff2) return { pass: true, reason: null, rsi: rsiTf, mode: 'breakdown' };
+  const reason = !nearEma && !stackedDn ? 'SETUP 15m: brak odbicia do EMA i brak ukladu zalamania'
+    : !rsiOk && !rsiMomOk2 ? 'SETUP 15m: RSI ' + rsiTf.toFixed(0) + ' poza strefa odbicia i poza strefa momentum'
+    : 'SETUP 15m: cena zbyt rozciagnieta pod EMA20 (blow-off)';
   return { pass: false, reason, rsi: rsiTf };
 }
 
@@ -1590,7 +1607,8 @@ async function analyzeSwing(sym) {
   // +8 bylo za slabym filtrem wobec sumy mozliwych bonusow (np. +20 dywergencja
   // + +15 BOS + +12 trend latwo przebijaly prog nawet w chopie). Ta sama
   // poprawka co w worker.js.
-  if (regime === 'sideways')   { regimeMinScoreAdj = 18; }
+  // +18 sumowalo sie z progami (np. XBT 66+18=84) i dzialalo jak wylacznik.
+  if (regime === 'sideways')   { regimeMinScoreAdj = 6; }
   if (regime === 'bull_trend') { score += 5; why.push('Rezim: bull trend'); }
   if (regime === 'bear_trend') { score -= 15; why.push('Rezim: bear trend'); }
   if (regime === 'volatile')   { score -= 8;  why.push('Rezim: volatile'); }
@@ -1723,9 +1741,9 @@ async function analyzeSwing(sym) {
   const buy         = scoreBuy && stagedLong;
   const shortSignal = scoreShort && stagedShort;
   const shortLevels = shortSignal ? {
-    tp: price * (1 - Math.max(CFG.tp, atrD/price*2.5)),
+    tp: price * (1 - Math.max(CFG.tp, atrD/price*3.0)),
     sl: price * (1 + Math.max(CFG.sl, atrD/price*1.5)),
-    rr: (Math.max(CFG.tp, atrD/price*2.5) / Math.max(CFG.sl, atrD/price*1.5)).toFixed(1)
+    rr: (Math.max(CFG.tp, atrD/price*3.0) / Math.max(CFG.sl, atrD/price*1.5)).toFixed(1)
   } : null;
 
   return {
@@ -2290,7 +2308,7 @@ function corrBlocked(sym) {
 
 // ═══════════════════════════════════════════════════════════════════
 //  IMPROVEMENT 3: DYNAMIC TP/SL BASED ON ATR
-//  TP = entry + 2.5 x ATR(14, 1H)
+//  TP = entry + 3.0 x ATR(14, 1H)
 //  SL = entry - 1.5 x ATR(14, 1H)
 //  Trailing = 1.2 x ATR (zamiast stałego %)
 // ═══════════════════════════════════════════════════════════════════
@@ -2304,7 +2322,8 @@ function calcDynamicLevels(price, atrVal, fee, pp) {
   // kosztem byl FEE, a realny spread/poslizg mogl "zjadac" TP zanim transakcja
   // faktycznie sie zamknie. Ta sama poprawka co w worker.js.
   var spreadBuf = price * 0.0015;
-  var tpDist = Math.max(price * cfgTp,  2.5 * atr14) + spreadBuf;
+  // 3.0x ATR zamiast 2.5x - po kosztach round-trip realne R:R ~1.6:1 zamiast ~1.25:1
+  var tpDist = Math.max(price * cfgTp,  3.0 * atr14) + spreadBuf;
   var slDist = Math.max(price * cfgSl,  1.5 * atr14) + spreadBuf;
   slDist = Math.max(slDist, price * 0.001); // min 0.1% aby uniknąć dzielenia przez 0
   // Upewnij sie ze R:R >= 1.5:1
