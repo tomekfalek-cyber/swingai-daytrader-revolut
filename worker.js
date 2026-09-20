@@ -534,10 +534,10 @@ async function runBotCycle(env) {
       addLog(state, 'GBM walk-forward refit: ' + Math.min(trades.length,200) + ' tradów, OOS=' + gbm.accuracyOOS + '%', 'ok');
     }
 
-    // FIX: Ensemble rebalance rzadziej (co 40 trade’ów) + silniejsza regularyzacja
-const milestone = Math.floor(trades.length / 40) * 40;
-if (trades.length >= 40 && milestone > (state.lastEnsembleRebalance || 0)) {
-  const ewUpd = rebalanceEnsemble(ew, nb, gbm, trades.slice(0, 40));
+   // FIX: Ensemble rebalance częściej (co 25 trade'ów) + lepsza elastyczność
+const milestone = Math.floor(trades.length / 25) * 25;
+if (trades.length >= 25 && milestone > (state.lastEnsembleRebalance || 0)) {
+  const ewUpd = rebalanceEnsemble(ew, nb, gbm, trades.slice(0, 25));
   if (ewUpd) {
     Object.assign(ew, ewUpd);
     state.lastEnsembleRebalance = milestone;
@@ -1046,11 +1046,11 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     (structure.event === 'BOS_up' || structure.event === 'CHoCH_up' || nearBullOB || (liqSweep && liqSweep.type === 'bullish')),
     (volR > 1.3 || vol4R > 1.3)
   ].filter(Boolean).length;
-  if (finalProb >= minScore / 100 && confluence < 2) {
+  if (finalProb >= minScore / 100 && confluence < 1) {
     why.push('Score OK, ale brak confluence (' + confluence + '/4 rodzin sygnalow) — wejscie odrzucone');
   }
 
-  const scoreBuy = finalProb >= minScore / 100 && confluence >= 2 && !bearBias;
+  const scoreBuy = finalProb >= minScore / 100 && confluence >= 1 && !bearBias; // obniżony próg konfluencji
 
   const shortThreshold = (100 - minScore) / 100;
   const bearConfluence = [
@@ -1059,7 +1059,7 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     (structure.event === 'BOS_down' || structure.event === 'CHoCH_down' || nearBearOB || (liqSweep && liqSweep.type === 'bearish')),
     (volR > 1.3 || vol4R > 1.3)
   ].filter(Boolean).length;
-  const scoreShort = finalProb <= shortThreshold && bearConfluence >= 2 && !bullBias;
+  const scoreShort = finalProb <= shortThreshold && bearConfluence >= 1 && !bullBias; // obniżony próg konfluencji dla shortów
 
   // Dodatkowy "twardy" filtr wejscia: KONTEKST(1H) -> SETUP(15m pullback/odbicie)
   // -> TRIGGER(5m swieca zapalajaca). Score+SMC powyzej wybiera KANDYDATA, ale
@@ -1888,7 +1888,7 @@ function kellySize(cfg, state, total, slPct) {
       if (kelly <= 0) {
         sz = Math.min(fixedSize, Math.max(5, safeTotal * 0.015));
       } else {
-        kelly = Math.min(0.04, kelly * 0.4);
+        kelly = Math.min(0.055, kelly * 0.55); // bardziej aktywny, ale bezpieczny Kelly
         sz = Math.max(5, Math.round(safeTotal * kelly * 100) / 100);
       }
     }
@@ -1997,29 +1997,30 @@ const PATTERNS = {
 // MODUŁY AI/ML
 // ═══════════════════════════════════════════════════════════════════════════
 function rebalanceEnsemble(ew, nb, gbm, recentTrades) {
-  if (!recentTrades || recentTrades.length < 15) return null;
-  const newEw = { score: ew.score, nb: ew.nb, gbm: ew.gbm, obi: ew.obi, ql: ew.ql };
+  if (!recentTrades || recentTrades.length < 8) return null;
+const newEw = { score: ew.score, nb: ew.nb, gbm: ew.gbm, obi: ew.obi, ql: ew.ql };
 
-  function expectancyFactor(matchFn) {
-    const matched = recentTrades.filter(matchFn);
-    if (matched.length < 4) return 1;
-    const avgPnlPct = matched.reduce((s, t) => s + (t.pnlPct || 0), 0) / matched.length;
-    // Silniejsza regularyzacja
-    return Math.max(0.7, Math.min(1.25, 1 + avgPnlPct / 20));
-  }
+function expectancyFactor(matchFn) {
+  const matched = recentTrades.filter(matchFn);
+  if (matched.length < 4) return 1;
+  const avgPnlPct = matched.reduce((s, t) => s + (t.pnlPct || 0), 0) / matched.length;
+  // Mniej agresywna regularyzacja – lepsza adaptacja do rynku
+  return Math.max(0.6, Math.min(1.3, 1 + avgPnlPct / 15));
+}
 
-  let nbCorrect = 0, nbTotal = 0;
-  recentTrades.forEach(t => {
-    if (!t.nbLabel) return;
-    nbTotal++;
-    if ((t.nbLabel === 'BUY' && t.pnl > 0) || (t.nbLabel !== 'BUY' && t.pnl <= 0)) nbCorrect++;
-  });
-  if (nbTotal >= 8) {
-    const nbAcc = nbCorrect / nbTotal;
-    const nbExp = expectancyFactor(t => t.nbLabel === 'BUY');
-    let raw = nbAcc * 1.6 * nbExp;
-    newEw.nb = +Math.max(0.4, Math.min(1.3, 0.8 + (raw - 0.8) * 0.6)).toFixed(2);
-  }
+let nbCorrect = 0, nbTotal = 0;
+recentTrades.forEach(t => {
+  if (!t.nbLabel) return;
+  nbTotal++;
+  if ((t.nbLabel === 'BUY' && t.pnl > 0) || (t.nbLabel !== 'BUY' && t.pnl <= 0)) nbCorrect++;
+});
+if (nbTotal >= 8) {
+  const nbAcc = nbCorrect / nbTotal;
+  const nbExp = expectancyFactor(t => t.nbLabel === 'BUY');
+  // Shrinkage w stronę 0.7 z mniejszym mnożnikiem
+  let raw = nbAcc * 1.4 * nbExp;
+  newEw.nb = +Math.max(0.4, Math.min(1.3, 0.7 + (raw - 0.7) * 0.7)).toFixed(2);
+}
 
   const gbmAcc = gbm.accuracyOOS > 0 ? gbm.accuracyOOS / 100 : 0.5;
   const gbmExp = expectancyFactor(t => typeof t.gbmProb === 'number' && t.gbmProb >= 0.5);
@@ -2060,29 +2061,29 @@ function makeNB(saved) {
       ];
     },
     trainFromTrades(trades) {
-      if (trades.length < 12) return false;
-      const bins = [4, 3, 4, 4, 4, 2];
-      const nF = 6;
-      const counts = { 0: {}, 1: {} };
-      const cc = { 0: 0, 1: 0 };
-      // Silniejsze wygładzanie Laplace’a
-      [0, 1].forEach(cl => {
-        for (let f = 0; f < nF; f++) for (let b = 0; b < bins[f]; b++) counts[cl][f + '_' + b] = 2;
-      });
-      trades.forEach(t => {
-        if (!t.nbFeatures) return;
-        const lbl = t.pnl > 0 ? 1 : 0;
-        cc[lbl]++;
-        t.nbFeatures.forEach((bin, f) => {
-          counts[lbl][f + '_' + bin] = (counts[lbl][f + '_' + bin] || 0) + 1;
-        });
-      });
-      const total = cc[0] + cc[1];
-      if (total < 8) return false;
-      this.model = { counts, cc, total, bins, nF };
-      this.trained = true;
-      this.trainCount = total;
-      return true;
+      if (trades.length < 8) return false; // niższe minimum
+const bins = [4, 3, 4, 4, 4, 2];
+const nF = 6;
+const counts = { 0: {}, 1: {} };
+const cc = { 0: 0, 1: 0 };
+// Łagodniejsze wygładzanie Laplace'a (start od 1.3 zamiast 2)
+[0, 1].forEach(cl => {
+  for (let f = 0; f < nF; f++) for (let b = 0; b < bins[f]; b++) counts[cl][f + '_' + b] = 1.3;
+});
+trades.forEach(t => {
+  if (!t.nbFeatures) return;
+  const lbl = t.pnl > 0 ? 1 : 0;
+  cc[lbl]++;
+  t.nbFeatures.forEach((bin, f) => {
+    counts[lbl][f + '_' + bin] = (counts[lbl][f + '_' + bin] || 0) + 1;
+  });
+});
+const total = cc[0] + cc[1];
+if (total < 8) return false;
+this.model = { counts, cc, total, bins, nF };
+this.trained = true;
+this.trainCount = total;
+return true;
     },
     predict(features) {
       if (!this.trained || !this.model) return { prob: 0.5, confidence: 'low', label: 'NEUTRAL' };
