@@ -1119,7 +1119,8 @@ if (nb.trained && gbm.trained) {
 else if (trendD >= 1 && rsiD > 60 && bbD.pos > 0.75 && !bullBias) {
   // Tylko w korektach silnego trendu
   const shortConfluence = [divD.bear, volR > 1.3, structure.event === 'CHoCH_down'].filter(Boolean).length;
-  scoreShort = finalProb <= (100 - minScore) / 100 && shortConfluence >= 2 && !bullBias;
+  const shortThresholdInBull = marketRegime === 'strong_bull' ? (100 - minScore * 0.92) / 100 : (100 - minScore) / 100;
+  scoreShort = finalProb <= shortThresholdInBull && shortConfluence >= 2 && !bullBias;
 } 
 // STRATEGIA DLA SHORT (TRENDOWANIE W DÓŁ)
 else if (trendD <= -1) {
