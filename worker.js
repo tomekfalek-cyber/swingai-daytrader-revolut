@@ -711,7 +711,9 @@ function calcSRLevels(highs, lows, price) {
 
 function detectRegime(closes, atrD, ema20, ema50) {
   const price = closes.at(-1);
-  const atrPct = atrD / price;
+  // Dodajemy sprawdzenie dla price
+  const atrPct = (atrD && price && price > 0) ? atrD / price : 0.01;
+  
   if (atrPct > 0.035) return 'volatile';
   if (Math.abs(ema20/ema50 - 1) < 0.005 && atrPct < 0.02) return 'sideways';
   if (price > ema20 && ema20 > ema50) return 'bull_trend';
