@@ -1096,7 +1096,7 @@ if (nb.trained && gbm.trained) {
     const longThreshold = marketRegime === 'strong_bull' ? minScore * 0.92 / 100 : minScore / 100;
     scoreBuy = finalProb >= longThreshold && longConfluence >= (marketRegime === 'strong_bull' ? 1 : 2) && !bearBias;
   } 
- // STRATEGIA DLA SHORT (TYLKO W KOREKTACH TRENDU)
+// STRATEGIA DLA SHORT (TYLKO W KOREKTACH TRENDU)
 else if (trendD >= 1 && rsiD > 60 && bbD.pos > 0.75 && !bullBias) {
   // Tylko w korektach silnego trendu
   const shortConfluence = [divD.bear, volR > 1.3, structure.event === 'CHoCH_down'].filter(Boolean).length;
