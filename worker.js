@@ -1061,9 +1061,9 @@ let dynamicEw = { ...ew };
 
 if (marketRegime === 'strong_bull' || marketRegime === 'strong_bear') {
   // W silnych trendach ZNACZNIE BARDZIEJ ufaj wskaźnikom technicznym niż modelom AI
-  dynamicEw.score = Math.min(1.3, ew.score * 1.5);
-  dynamicEw.nb = Math.max(0.2, ew.nb * 0.5);
-  dynamicEw.gbm = Math.max(0.2, ew.gbm * 0.5);
+  dynamicEw.score = Math.min(1.3, ew.score * 1.8);
+  dynamicEw.nb = Math.max(0.1, ew.nb * 0.3);
+  dynamicEw.gbm = Math.max(0.1, ew.gbm * 0.3);
 } else if (marketRegime === 'sideways') {
   // W range'u bardziej ufaj modelom AI
   dynamicEw.score = Math.max(0.3, ew.score * 0.7);
@@ -1108,12 +1108,20 @@ if (nb.trained && gbm.trained) {
   let scoreBuy = false, scoreShort = false;
 
   // STRATEGIA DLA LONG (TRENDOWANIE W GÓRĘ)
-  if (trendD >= 1) {
-    // W silnym trendzie byczym, wymagaj Mniej konfluencji dla LONG
-    const longConfluence = [rsiD <= 45, bbD.pos < 0.30, divD.bull, volR > 1.2].filter(Boolean).length;
-    const longThreshold = marketRegime === 'strong_bull' ? minScore * 0.92 / 100 : minScore / 100;
-    scoreBuy = finalProb >= longThreshold && longConfluence >= (marketRegime === 'strong_bull' ? 1 : 2) && !bearBias;
-  } 
+if (trendD >= 1) {
+  // W silnym trendzie byczym, wymagaj Mniej konfluencji dla LONG
+  let longConfluence;
+  if (marketRegime === 'strong_bull') {
+    // W silnym trendzie byczym wystarczy 1 z 2 kluczowych warunków SMC
+    longConfluence = [divD.bull, structure.event === 'BOS_up' || structure.event === 'CHoCH_up'].filter(Boolean).length;
+  } else {
+    // W umiarkowanym trendzie wymagaj 2 z 4 warunków
+    longConfluence = [rsiD <= 45, bbD.pos < 0.30, divD.bull, volR > 1.2].filter(Boolean).length;
+  }
+  
+  const longThreshold = marketRegime === 'strong_bull' ? minScore * 0.92 / 100 : minScore / 100;
+  scoreBuy = finalProb >= longThreshold && longConfluence >= (marketRegime === 'strong_bull' ? 1 : 2) && !bearBias;
+}
 // STRATEGIA DLA SHORT (TYLKO W KOREKTACH TRENDU)
 else if (trendD >= 1 && rsiD > 60 && bbD.pos > 0.75 && !bullBias && marketRegime !== 'strong_bull') {
   // Tylko w korektach silnego trendu, ale NIE w silnym trendzie byczym
