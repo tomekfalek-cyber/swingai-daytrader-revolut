@@ -880,11 +880,24 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
   const _v4Sum20 = h4.v.length >= 20 ? h4.v.slice(-20).reduce((a,b)=>a+b,0) : 0;
   const vol4R = (_v4Sum20 > 0) ? h4.v.at(-1) / (_v4Sum20/20) : 1;
 
-  const mom5  = d.c.length > 5  ? (price / d.c.at(-6)  - 1) * 100 : 0;
-  const mom10 = d.c.length > 10 ? (price / d.c.at(-11) - 1) * 100 : 0;
+  const mom5 = d.c.length > 5 ? (price / d.c.at(-6) - 1) * 100 : 0;
+const mom10 = d.c.length > 10 ? (price / d.c.at(-11) - 1) * 100 : 0;
 
-  let score = 0;
-  const why = [];
+// === NOWY KOD: WYKRYWANIE REŻIMU RYNKU ===
+function detectMarketRegime(btcChange, rsi, macdHist, atrPct) {
+  if (Math.abs(btcChange) > 3 && Math.abs(rsi - 50) > 15 && Math.abs(macdHist) > atrPct * 0.7) {
+    return btcChange > 0 ? 'strong_bull' : 'strong_bear';
+  }
+  if (Math.abs(btcChange) < 1.5 && Math.abs(rsi - 50) < 10 && Math.abs(macdHist) < atrPct * 0.3) {
+    return 'sideways';
+  }
+  return 'moderate_trend';
+}
+
+const marketRegime = detectMarketRegime(btcInfo.change24h, rsiD, macdD.hist, atrD/price);
+// ==========================================
+
+let score = 0; const why = [];
 
   if      (rsiD <= 25) { score += 30; why.push('RSI-D=' + rsiD.toFixed(0) + ' (extreme OS)'); }
   else if (rsiD <= 32) { score += 24; why.push('RSI-D oversold (' + rsiD.toFixed(0) + ')'); }
@@ -1019,17 +1032,39 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     score = Math.max(0, Math.min(100, score + qlBonus));
   }
 
-  let finalProb = score / 100;
-  let aiMethod  = 'Score';
-  const obiNorm = ((obiData.ratio || 0.5) - 0.3) / 0.4;
+  llet finalProb = score / 100;
+let aiMethod  = 'Score';
+const obiNorm = ((obiData.ratio || 0.5) - 0.3) / 0.4;
 
-  if (nb.trained && gbm.trained) {
-    const wSum = (ew.score + ew.nb + ew.gbm + ew.obi + ew.ql) || 1;
-    finalProb = Math.max(0, Math.min(1,
-      (score/100 * ew.score + nbPred.prob * ew.nb + gbmProb * ew.gbm +
-       Math.max(0, Math.min(1, obiNorm)) * ew.obi +
-       (qlSugg && qlSugg.action==='BUY' ? 1 : 0) * ew.ql) / wSum));
-    aiMethod = 'Ensemble(Score+NB+GBM+OBI+QL)';
+// === NOWY KOD: DYNAMICZNE WAGOWANIE W ZALEŻNOŚCI OD REŻIMU ===
+let dynamicEw = { ...ew };
+
+if (marketRegime === 'strong_bull' || marketRegime === 'strong_bear') {
+  // W silnych trendach bardziej ufaj wskaźnikom technicznym niż modelom AI
+  dynamicEw.score = Math.min(1.3, ew.score * 1.2);
+  dynamicEw.nb = Math.max(0.3, ew.nb * 0.7);
+  dynamicEw.gbm = Math.max(0.3, ew.gbm * 0.7);
+} else if (marketRegime === 'sideways') {
+  // W range'u bardziej ufaj modelom AI
+  dynamicEw.score = Math.max(0.3, ew.score * 0.7);
+  dynamicEw.nb = Math.min(1.3, ew.nb * 1.2);
+  dynamicEw.gbm = Math.min(1.3, ew.gbm * 1.2);
+}
+// ============================================================
+
+if (nb.trained && gbm.trained) {
+  const wSum = (dynamicEw.score + dynamicEw.nb + dynamicEw.gbm + dynamicEw.obi + dynamicEw.ql) || 1;
+  finalProb = Math.max(0, Math.min(1,
+    (score/100 * dynamicEw.score + nbPred.prob * dynamicEw.nb + gbmProb * dynamicEw.gbm +
+     Math.max(0, Math.min(1, obiNorm)) * dynamicEw.obi +
+     (qlSugg && qlSugg.action==='BUY' ? 1 : 0) * dynamicEw.ql) / wSum));
+  aiMethod = 'Ensemble(Score+NB+GBM+OBI+QL)';
+  if (nbPred.label === 'SKIP' && gbmProb < 0.4) why.push('AI odradza wejscie');
+} else if (nb.trained) {
+  const wSum = (dynamicEw.score + dynamicEw.nb + dynamicEw.obi) || 1;
+  finalProb = (score/100 * dynamicEw.score + nbPred.prob * dynamicEw.nb + Math.max(0,Math.min(1,obiNorm)) * dynamicEw.obi) / wSum;
+  aiMethod = 'Score+NB+OBI';
+}
     if (nbPred.label === 'SKIP' && gbmProb < 0.4) why.push('AI odradza wejscie');
   } else if (nb.trained) {
     const wSum = (ew.score + ew.nb + ew.obi) || 1;
@@ -1050,7 +1085,29 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
     why.push('Score OK, ale brak confluence (' + confluence + '/4 rodzin sygnalow) — wejscie odrzucone');
   }
 
-  const scoreBuy = finalProb >= minScore / 100 && confluence >= 1 && !bearBias; // obniżony próg konfluencji
+  // === NOWY KOD: ODDZIELNA LOGIKA DLA LONG I SHORT ===
+  let scoreBuy = false, scoreShort = false;
+
+  // STRATEGIA DLA LONG (TRENDOWANIE W GÓRĘ)
+  if (trendD >= 1) {
+    // W silnym trendzie byczym, wymagaj Mniej konfluencji dla LONG
+    const longConfluence = [rsiD <= 45, bbD.pos < 0.30, divD.bull, volR > 1.2].filter(Boolean).length;
+    const longThreshold = marketRegime === 'strong_bull' ? minScore * 0.92 / 100 : minScore / 100;
+    scoreBuy = finalProb >= longThreshold && longConfluence >= (marketRegime === 'strong_bull' ? 1 : 2) && !bearBias;
+  } 
+  // STRATEGIA DLA SHORT (TYLKO W KOREKTACH TRENDU)
+  else if (trendD >= 1 && rsiD > 60 && bbD.pos > 0.75) {
+    // Tylko w korektach silnego trendu
+    const shortConfluence = [divD.bear, volR > 1.3, structure.event === 'CHoCH_down'].filter(Boolean).length;
+    scoreShort = finalProb <= (100 - minScore) / 100 && shortConfluence >= 2;
+  } 
+  // STRATEGIA DLA SHORT (TRENDOWANIE W DÓŁ)
+  else if (trendD <= -1) {
+    const shortConfluence = [rsiD >= 55, bbD.pos > 0.70, divD.bear, volR > 1.2].filter(Boolean).length;
+    const shortThreshold = marketRegime === 'strong_bear' ? (100 - minScore * 0.92) / 100 : (100 - minScore) / 100;
+    scoreShort = finalProb <= shortThreshold && shortConfluence >= (marketRegime === 'strong_bear' ? 1 : 2) && !bullBias;
+  }
+  // ==================================================== // obniżony próg konfluencji
 
   const shortThreshold = (100 - minScore) / 100;
   const bearConfluence = [
