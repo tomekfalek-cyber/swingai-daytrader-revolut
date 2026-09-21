@@ -1060,10 +1060,10 @@ const obiNorm = ((obiData.ratio || 0.5) - 0.3) / 0.4;
 let dynamicEw = { ...ew };
 
 if (marketRegime === 'strong_bull' || marketRegime === 'strong_bear') {
-  // W silnych trendach bardziej ufaj wskaźnikom technicznym niż modelom AI
-  dynamicEw.score = Math.min(1.3, ew.score * 1.2);
-  dynamicEw.nb = Math.max(0.3, ew.nb * 0.7);
-  dynamicEw.gbm = Math.max(0.3, ew.gbm * 0.7);
+  // W silnych trendach ZNACZNIE BARDZIEJ ufaj wskaźnikom technicznym niż modelom AI
+  dynamicEw.score = Math.min(1.3, ew.score * 1.5);
+  dynamicEw.nb = Math.max(0.2, ew.nb * 0.5);
+  dynamicEw.gbm = Math.max(0.2, ew.gbm * 0.5);
 } else if (marketRegime === 'sideways') {
   // W range'u bardziej ufaj modelom AI
   dynamicEw.score = Math.max(0.3, ew.score * 0.7);
@@ -1071,7 +1071,6 @@ if (marketRegime === 'strong_bull' || marketRegime === 'strong_bear') {
   dynamicEw.gbm = Math.min(1.3, ew.gbm * 1.2);
 }
 // ============================================================
-
 if (nb.trained && gbm.trained) {
   const wSum = (dynamicEw.score + dynamicEw.nb + dynamicEw.gbm + dynamicEw.obi + dynamicEw.ql) || 1;
   finalProb = Math.max(0, Math.min(1,
@@ -1116,8 +1115,8 @@ if (nb.trained && gbm.trained) {
     scoreBuy = finalProb >= longThreshold && longConfluence >= (marketRegime === 'strong_bull' ? 1 : 2) && !bearBias;
   } 
 // STRATEGIA DLA SHORT (TYLKO W KOREKTACH TRENDU)
-else if (trendD >= 1 && rsiD > 60 && bbD.pos > 0.75 && !bullBias) {
-  // Tylko w korektach silnego trendu
+else if (trendD >= 1 && rsiD > 60 && bbD.pos > 0.75 && !bullBias && marketRegime !== 'strong_bull') {
+  // Tylko w korektach silnego trendu, ale NIE w silnym trendzie byczym
   const shortConfluence = [divD.bear, volR > 1.3, structure.event === 'CHoCH_down'].filter(Boolean).length;
   const shortThresholdInBull = marketRegime === 'strong_bull' ? (100 - minScore * 0.92) / 100 : (100 - minScore) / 100;
   scoreShort = finalProb <= shortThresholdInBull && shortConfluence >= 2 && !bullBias;
