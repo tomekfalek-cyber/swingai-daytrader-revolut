@@ -884,14 +884,16 @@ async function analyzeSwing(sym, cfg, state, nb, gbm, ql, ew, pairParams, adapti
 const mom10 = d.c.length > 10 ? (price / d.c.at(-11) - 1) * 100 : 0;
 
 // === NOWY KOD: WYKRYWANIE REŻIMU RYNKU ===
-function detectMarketRegime(btcChange, rsi, macdHist, atrPct) {
-  if (Math.abs(btcChange) > 3 && Math.abs(rsi - 50) > 15 && Math.abs(macdHist) > atrPct * 0.7) {
-    return btcChange > 0 ? 'strong_bull' : 'strong_bear';
-  }
-  if (Math.abs(btcChange) < 1.5 && Math.abs(rsi - 50) < 10 && Math.abs(macdHist) < atrPct * 0.3) {
-    return 'sideways';
-  }
-  return 'moderate_trend';
+function detectRegime(closes, atrD, ema20, ema50) {
+  const price = closes.at(-1);
+  // Dodajemy sprawdzenie dla atrD i price
+  const atrPct = (atrD && price && price > 0) ? atrD / price : 0.01;
+  
+  if (atrPct > 0.035) return 'volatile';
+  if (Math.abs(ema20/ema50 - 1) < 0.005 && atrPct < 0.02) return 'sideways';
+  if (price > ema20 && ema20 > ema50) return 'bull_trend';
+  if (price < ema20 && ema20 < ema50) return 'bear_trend';
+  return 'neutral';
 }
 
 const marketRegime = detectMarketRegime(btcInfo.change24h, rsiD, macdD.hist, atrD/price);
@@ -968,9 +970,8 @@ let score = 0; const why = [];
   if (div4h.bear) { score -= 7;  why.push('RSI dywergen. niedzwiedzia 4H'); }
 
   const bearBias = trendD === -1 && rsiD > 50;
-  if (bearBias) { score -= 30; why.push('BESSA: long zablokowany (twardy filtr)'); }
-  const bullBias = trendD === 2 && rsiD < 50;
-  score = Math.max(0, Math.min(100, Math.round(score)));
+const bullBias = trendD === 2 && rsiD < 50;
+score = Math.max(0, Math.min(100, Math.round(score)));
 
   if (price > vwap4h) { score += 8;  why.push('Ponad VWAP'); }
   else                { score -= 5;  why.push('Ponizej VWAP'); }
@@ -1095,18 +1096,18 @@ if (nb.trained && gbm.trained) {
     const longThreshold = marketRegime === 'strong_bull' ? minScore * 0.92 / 100 : minScore / 100;
     scoreBuy = finalProb >= longThreshold && longConfluence >= (marketRegime === 'strong_bull' ? 1 : 2) && !bearBias;
   } 
-  // STRATEGIA DLA SHORT (TYLKO W KOREKTACH TRENDU)
-  else if (trendD >= 1 && rsiD > 60 && bbD.pos > 0.75) {
-    // Tylko w korektach silnego trendu
-    const shortConfluence = [divD.bear, volR > 1.3, structure.event === 'CHoCH_down'].filter(Boolean).length;
-    scoreShort = finalProb <= (100 - minScore) / 100 && shortConfluence >= 2;
-  } 
-  // STRATEGIA DLA SHORT (TRENDOWANIE W DÓŁ)
-  else if (trendD <= -1) {
-    const shortConfluence = [rsiD >= 55, bbD.pos > 0.70, divD.bear, volR > 1.2].filter(Boolean).length;
-    const shortThreshold = marketRegime === 'strong_bear' ? (100 - minScore * 0.92) / 100 : (100 - minScore) / 100;
-    scoreShort = finalProb <= shortThreshold && shortConfluence >= (marketRegime === 'strong_bear' ? 1 : 2) && !bullBias;
-  }
+ // STRATEGIA DLA SHORT (TYLKO W KOREKTACH TRENDU)
+else if (trendD >= 1 && rsiD > 60 && bbD.pos > 0.75 && !bullBias) {
+  // Tylko w korektach silnego trendu
+  const shortConfluence = [divD.bear, volR > 1.3, structure.event === 'CHoCH_down'].filter(Boolean).length;
+  scoreShort = finalProb <= (100 - minScore) / 100 && shortConfluence >= 2 && !bullBias;
+} 
+// STRATEGIA DLA SHORT (TRENDOWANIE W DÓŁ)
+else if (trendD <= -1) {
+  const shortConfluence = [rsiD >= 55, bbD.pos > 0.70, divD.bear, volR > 1.2].filter(Boolean).length;
+  const shortThreshold = marketRegime === 'strong_bear' ? ((100 - minScore) * 0.92) / 100 : (100 - minScore) / 100;
+  scoreShort = finalProb <= shortThreshold && shortConfluence >= (marketRegime === 'strong_bear' ? 1 : 2) && !bullBias;
+}
   // ==================================================== // obniżony próg konfluencji
 
   const shortThreshold = (100 - minScore) / 100;
