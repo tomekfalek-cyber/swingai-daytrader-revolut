@@ -721,6 +721,23 @@ function detectRegime(closes, atrD, ema20, ema50) {
   return 'neutral';
 }
 
+// === NOWY KOD: WYKRYWANIE RYNKU DLA ENSEMBLE ===
+function detectMarketRegime(btcChange, rsi, macdHist, atrPct) {
+  // Dodajemy sprawdzenie dla atrPct
+  if (!isFinite(atrPct) || atrPct <= 0) atrPct = 0.01;
+  
+  if (Math.abs(btcChange) > 3 && Math.abs(rsi - 50) > 15 && Math.abs(macdHist) > atrPct * 0.7) {
+    return btcChange > 0 ? 'strong_bull' : 'strong_bear';
+  }
+  if (Math.abs(btcChange) < 1.5 && Math.abs(rsi - 50) < 10 && Math.abs(macdHist) < atrPct * 0.3) {
+    return 'sideways';
+  }
+  return 'moderate_trend';
+}
+
+const marketRegime = detectMarketRegime(btcInfo.change24h, rsiD, macdD.hist, atrD/price);
+// ==========================================
+
 function calcStats(trades) {
   if (!trades || trades.length < 5) return { sharpe:0, sortino:0, maxDD:0, winRate:0 };
   const rets = trades.map(t => t.pnlPct / 100);
@@ -1975,19 +1992,16 @@ function effectiveSpreadBuffer(spreadPct) {
 }
 
 function calcDynamicLevels(price, atrD, cfg, pp, spreadPct) {
-  const atrPct    = atrD / price;
-  const cfgTp     = (pp && pp.tp != null) ? pp.tp : cfg.tp;
-  const cfgSl     = (pp && pp.sl != null) ? pp.sl : cfg.sl;
+  // Dodajemy sprawdzenie dla price
+  const safePrice = Math.max(price, 0.000001);
+  const atrPct = atrD / safePrice;
+  const cfgTp = (pp && pp.tp != null) ? pp.tp : cfg.tp;
+  const cfgSl = (pp && pp.sl != null) ? pp.sl : cfg.sl;
   const spreadBuf = effectiveSpreadBuffer(spreadPct);
-  // 2.5x ATR dawalo po kosztach (0.28% round-trip) realne R:R ~1.25:1 i prog
-  // oplacalnosci ~44% trafien. 3.0x podnosi to do ~1.6:1 i prog do ~38%.
-  const tpOffset  = Math.max(cfgTp,   atrPct * 3.0) + spreadBuf;
-  const slOffset  = Math.max(cfgSl,   atrPct * 1.5) + spreadBuf;
-  const trail     = Math.max(cfg.trail, atrPct * 1.2);
-  const tp    = price * (1 + tpOffset);
-  const sl    = price * (1 - slOffset);
-  const rr    = ((tp - price) / (price - sl)).toFixed(1);
-  return { tp, sl, trail, rr, atrPct: (atrPct*100).toFixed(2) };
+  const tpOffset = Math.max(cfgTp, atrPct * 2.5) + spreadBuf;
+  const slOffset = Math.max(cfgSl, atrPct * 1.5) + spreadBuf;
+  const trail = Math.max(cfg.trail, atrPct * 1.2);
+  return { tp: price * (1 + tpOffset), sl: price * (1 - slOffset), trail, rr: ((price * (1 + tpOffset) - price) / (price - price * (1 - slOffset))).toFixed(1), atrPct: (atrPct*100).toFixed(2) };
 }
 
 function computeAdaptiveMinScore(trades, baseMin) {
@@ -2485,14 +2499,11 @@ async function getFearGreed(state) {
   const cache = state.lastFG || { val: 50, label: 'Neutral', ts: 0 };
   if (Date.now() - (cache.ts || 0) < 3600000) return cache;
   try {
-    const r = await fetchWithTimeout('https://api.alternative.me/fng/?limit=1', 5000);
-    const d = await r.json();
-    if (!d.data || !d.data[0]) return cache;
-    const val = +d.data[0].value;
-    if (!isFinite(val)) return cache;
+    const r = await fetchWithTimeout('https://api.alternative.me/fng/?limit=1', 5000), d = await r.json();
+    if (!d.data || !d.data[0] || !d.data[0].value) return cache;
+    const val = +d.data[0].value; if (!isFinite(val) || val < 0 || val > 100) return cache;
     const fg = { val, label: d.data[0].value_classification || 'Neutral', ts: Date.now() };
-    state.lastFG = fg;
-    return fg;
+    state.lastFG = fg; return fg;
   } catch(e) { return cache; }
 }
 
