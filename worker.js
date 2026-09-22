@@ -1083,13 +1083,11 @@ if (nb.trained && gbm.trained) {
   const wSum = (dynamicEw.score + dynamicEw.nb + dynamicEw.obi) || 1;
   finalProb = (score/100 * dynamicEw.score + nbPred.prob * dynamicEw.nb + Math.max(0,Math.min(1,obiNorm)) * dynamicEw.obi) / wSum;
   aiMethod = 'Score+NB+OBI';
+} else {
+  // STRATEGIA PODSTAWOWA DLA OKRESU ROZGRZEWKI (brak nauczonych modeli)
+  finalProb = score / 100;
+  aiMethod = 'Basic Score (no models)';
 }
-    if (nbPred.label === 'SKIP' && gbmProb < 0.4) why.push('AI odradza wejscie');
-  } else if (nb.trained) {
-    const wSum = (ew.score + ew.nb + ew.obi) || 1;
-    finalProb = (score/100 * ew.score + nbPred.prob * ew.nb + Math.max(0,Math.min(1,obiNorm)) * ew.obi) / wSum;
-    aiMethod  = 'Score+NB+OBI';
-  }
 
   const pp       = pairParams[sym] || PAIR_PARAMS_DEFAULT[sym] || null;
   const minScore = (pp ? pp.minScore : adaptiveMinScore) + regimeMinScoreAdj;
